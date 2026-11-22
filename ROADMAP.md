@@ -9,6 +9,14 @@ All milestones are proposed, not completed. Prefer reproducible evidence to feat
 - [ ] Define RF/Internet regulatory and abuse threat models, and performance budgets for 1200-baud packet, HF and IP.
 **Exit:** technology decision matrix and versioned request envelope.
 
+## M0.5 — Winlink interoperability feasibility (next priority)
+- [ ] Trace Open B2F client/RMS sessions and authentication using Pat and wl2k-go.
+- [ ] Inspect Linux RMS Gateway source for actual RMS-to-CMS transport, configuration and dependencies.
+- [ ] Test independent B2F endpoint with Pat in an isolated lab.
+- [ ] Determine whether unmodified RMS software can use a self-hosted CMS; record blockers and alternatives.
+- [ ] Map Winlink email-based information requests into a generic service-request adapter.
+**Exit:** documented compatibility matrix and go/no-go recommendation for preserving existing clients and gateways. See [research plan](docs/WINLINK-INTEROPERABILITY.md).
+
 ## M1 — Three-node information-request simulation
 - [ ] Independently configured nodes with persistent local queues and no mandatory coordinator.
 - [ ] Client requests weather or RSS from a node lacking Internet.
