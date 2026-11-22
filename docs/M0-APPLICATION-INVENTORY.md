@@ -1,6 +1,6 @@
 # M0 application integration inventory
 
-**Status:** preliminary source inventory, 2026-11-22. Evidence is from the current repository READMEs; function signatures and deployment contracts still require code-level inspection. This is not a claim that any adapter is implemented.
+**Status:** preliminary code-backed inventory, 2026-11-22. Evidence includes repository READMEs and selected source functions; remaining functions and deployment contracts need further inspection. No adapter has been implemented.
 
 ## Existing application boundaries
 
@@ -18,6 +18,17 @@
 Sources:
 - https://github.com/bradbrownjr/bpq-apps/blob/main/README.md
 - https://github.com/bradbrownjr/rns-apps/blob/main/README.md
+
+## Verified source-level extraction candidates
+
+- [bpq-apps `apps/wx.py`](https://github.com/bradbrownjr/bpq-apps/blob/main/apps/wx.py): `get_forecast_7day(latlon)` and `get_forecast_hourly(latlon, hours=12)` return data rather than terminal pages, making them candidate service-handler seams. `load_cache()`, `save_cache(data)`, `get_cached_local_weather()` use an adjacent JSON file with `cache_timestamp`. These functions currently do direct network or file I/O and broadly catch exceptions; adapters need dependency injection, validation, error taxonomy and size limits.
+- [bpq-apps `apps/rss-news.py`](https://github.com/bradbrownjr/bpq-apps/blob/main/apps/rss-news.py): `RSSReader.fetch_feed(url)` parses RSS/Atom to article dictionaries, while `get_cached_feed(category, feed_name)` accesses a local cache. `RSSReader` also owns interactive reader state; extract a pure feed service instead of instantiating a terminal UI in the CMS. The direct `urlopen(...).read()` path is not a bounded public-federation fetcher.
+- [rns-apps `pages/wx.mu`](https://github.com/bradbrownjr/rns-apps/blob/main/pages/wx.mu): `fetch(kind, point, lat, lon)` dispatches current conditions/forecasts/alerts; `REPORTS` defines distinct TTLs (current 900 s, forecasts 1800 s, alerts 300 s, AFD/HWO 3600 s). Its `render()` gathers NomadNet form values and identity and should stay in the UI adapter.
+- [rns-apps `pages/news.mu`](https://github.com/bradbrownjr/rns-apps/blob/main/pages/news.mu): `parse_feed(raw)`, `fetch_feed(url)`, and `fetch_article(url)` are service extraction candidates. The page uses feed TTL 1800 s, article TTL 6 h, and a per-page presentation limit; presentation pagination is not the same as federation response-byte budget.
+- [rns-apps `lib/rnsapps.py`](https://github.com/bradbrownjr/rns-apps/blob/main/lib/rnsapps.py): `cached(key, ttl, fetch)` returns exactly `(data, fetched_epoch, stale)` and falls back to older cached data when fetch fails; `cache_peek(key)` reads without network access. These are directly useful semantics for federated responses. `http_get()` uses unbounded `resp.read()` and must **not** be exposed to untrusted remote URLs without restrictions, streaming limits and redirect validation.
+- Verified the root `LICENSE` file of **both** bpq-apps and rns-apps is **CC0 1.0 Universal**, while Federated CMS is MIT. Review dependencies/assets individually; do not assume third-party content inherits CC0.
+
+**Conclusion:** there are real extraction candidates already. Reuse the parsers, cache semantics and data fetchers only behind bounded interfaces, **not** the interactive terminal/page request handlers as-is. HTTP and caller identity must be validated at the CMS boundary.
 
 ## Host and identity constraints
 
@@ -39,9 +50,9 @@ Candidate service contract (proposal, **not yet versioned wire format**):
 
 ## Remaining code-level inventory work
 
-1. Inspect `bpq-apps/apps/wx.py`, `rss-news.py`, `gopher.py`, `forms.py` for entrypoints, subprocess use, cache paths and functions separable from terminal I/O.
-2. Inspect `rns-apps/pages/wx.mu`, `news.mu`, `forms.mu` and `lib/rnsapps.py` for page environment, request parameters and shared functions.
-3. Determine actual license terms per repository and third-party modules before copying code; both READMEs identify rns-apps and bpq-apps as CC0, while Federated CMS is MIT.
+1. Finish inspecting `bpq-apps/apps/gopher.py` and `forms.py`, then establish testable wrappers for the verified weather/RSS functions.
+2. Inspect `rns-apps/pages/forms.mu` and complete parameter/identity authorization review for the verified wx/news paths.
+3. Audit dependency licenses and any externally sourced data/assets before copying code (both repository root LICENSE files verified CC0).
 4. Implement a single weather-service adapter behind a mocked transport and compare outputs and freshness behavior.
 5. Measure rendered response sizes for 1200-baud packet and identify content caps.
 
