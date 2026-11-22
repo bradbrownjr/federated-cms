@@ -25,7 +25,7 @@ Milestone exit gates remain open until demonstrated. Checked items denote comple
 **Exit:** documented compatibility matrix and go/no-go recommendation for preserving existing clients and gateways. See [research plan](docs/WINLINK-INTEROPERABILITY.md).
 
 ## M1 — Three-node information-request simulation
-- [ ] Prototype one shared localhost terminal session handler with both Linux inetd/stdio and Windows self-listening TCP launch modes; queue a weather request and return an authorized result or status ([BPQ interface RFC](docs/BPQ-LOCAL-INTERFACE.md)); retain separate binary B2F endpoint.
+- [x] Prototype one shared localhost terminal session handler with both Linux inetd/stdio and Windows self-listening TCP launch modes; queue a weather request and return an authorized result or status ([BPQ interface RFC](docs/BPQ-LOCAL-INTERFACE.md)); retain separate binary B2F endpoint.
 - [ ] Independently configured nodes with persistent local queues and no mandatory coordinator.
 - [ ] Client requests weather or RSS from a node lacking Internet.
 - [ ] Discover a reachable node with Internet egress or cached content.

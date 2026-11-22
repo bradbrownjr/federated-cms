@@ -2,6 +2,12 @@
 
 **Status: exploratory research. No production network or protocol is claimed.**
 
+## M1 local prototype
+
+The repository now includes a local SQLite-backed CMS core and an ASCII-only BPQ
+terminal bridge for the first M1 increment. It is intentionally not federation
+or B2F. See [development setup and BPQ examples](docs/DEVELOPMENT.md).
+
 Federated CMS investigates a decentralized, self-hostable messaging and information network for amateur radio. Nodes remain useful when isolated, discover peers without a mandatory central coordinator, forward durable requests and messages when links return, and route client information requests to reachable providers or Internet egress gateways.
 
 CMS is used here descriptively for **Common Message Server**; this project is independent of Winlink and is not affiliated with or endorsed by its operators. Compatibility is a research goal, not an existing feature.
