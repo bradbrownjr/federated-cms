@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bradbrownjr/federated-cms/blob/main/schema/envelope-v0.1.schema.json",
+  "title": "Federated CMS v0.1 research application envelope",
+  "description": "M1 lab validation only. Timestamp ordering/TTL, byte-length limits, duplicate JSON keys, dedup, and authorization require runtime checks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fcm_version",
+    "id",
+    "type",
+    "origin_node",
+    "created_at",
+    "expires_at",
+    "max_hops",
+    "destination",
+    "body"
+  ],
+  "properties": {
+    "fcm_version": {
+      "const": "0.1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "type": {
+      "enum": [
+        "request",
+        "response"
+      ]
+    },
+    "origin_node": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "maxLength": 128
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 40
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 40
+    },
+    "max_hops": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16
+    },
+    "destination": {
+      "type": "object"
+    },
+    "body": {
+      "type": "object"
+    },
+    "correlation_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    }
+  },
+  "$defs": {
+    "serviceDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service"
+      ],
+      "properties": {
+        "service": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+          "maxLength": 64
+        }
+      }
+    },
+    "nodeDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node"
+      ],
+      "properties": {
+        "node": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "maxLength": 128
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,31}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "maxLength": 512
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "requestBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "parameters",
+        "reply_to_node",
+        "max_response_bytes",
+        "cache_policy"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "maxLength": 64
+        },
+        "parameters": {
+          "$ref": "#/$defs/parameters"
+        },
+        "reply_to_node": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "maxLength": 128
+        },
+        "max_response_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2048
+        },
+        "cache_policy": {
+          "enum": [
+            "fresh_only",
+            "allow_stale",
+            "cache_only"
+          ]
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "fetched_at",
+        "stale"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "fetched_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$",
+              "maxLength": 40
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      }
+    },
+    "successBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "media_type",
+        "content",
+        "truncated",
+        "provenance"
+      ],
+      "properties": {
+        "status": {
+          "const": "ok"
+        },
+        "media_type": {
+          "const": "text/plain; charset=utf-8"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "errorBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "error_code"
+      ],
+      "properties": {
+        "status": {
+          "const": "error"
+        },
+        "error_code": {
+          "enum": [
+            "invalid_request",
+            "unauthorized",
+            "unavailable",
+            "expired",
+            "rate_limited",
+            "internal_error"
+          ]
+        },
+        "error_detail": {
+          "type": "string",
+          "maxLength": 160
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "type": {
+          "const": "request"
+        },
+        "destination": {
+          "$ref": "#/$defs/serviceDestination"
+        },
+        "body": {
+          "$ref": "#/$defs/requestBody"
+        }
+      },
+      "not": {
+        "required": [
+          "correlation_id"
+        ]
+      }
+    },
+    {
+      "required": [
+        "correlation_id"
+      ],
+      "properties": {
+        "type": {
+          "const": "response"
+        },
+        "destination": {
+          "$ref": "#/$defs/nodeDestination"
+        },
+        "body": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/successBody"
+            },
+            {
+              "$ref": "#/$defs/errorBody"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
