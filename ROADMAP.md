@@ -3,11 +3,15 @@
 All milestones are proposed, not completed. Prefer reproducible evidence to feature count.
 
 ## M0 — Inventory and requirements
-- [ ] Inspect bpq-apps and rns-apps application interfaces and extract reusable service handlers.
-- [ ] Document Winlink CMS/client interoperability boundaries without assuming undocumented behavior.
-- [ ] Compare BPv7 implementations, libp2p, Reticulum/LXMF, UUCP-style forwarding, and a minimal store-and-forward implementation.
-- [ ] Define RF/Internet regulatory and abuse threat models, and performance budgets for 1200-baud packet, HF and IP.
-**Exit:** technology decision matrix and versioned request envelope.
+- [x] Inventory BPQ/RNS service candidates and verify selected source interfaces ([inventory](docs/M0-APPLICATION-INVENTORY.md)).
+- [ ] Complete BPQ/RNS service-handler extraction, authorization review and adapter tests.
+- [ ] Complete Winlink CMS/client interoperability boundary investigation, especially RMS-to-CMS ([research plan](docs/WINLINK-INTEROPERABILITY.md)).
+- [x] Write a qualitative comparison of BPv7/ION, libp2p, Reticulum/LXMF, UUCP-style and minimal forwarding ([technology matrix](docs/TECHNOLOGY-MATRIX.md)).
+- [ ] Benchmark at least one standard DTN implementation against minimal store-and-forward, including resource and actual byte costs.
+- [x] Draft versioned logical request/response envelope and machine-readable schema ([v0.1 spec](docs/REQUEST-ENVELOPE-v0.1.md), [schema](schema/envelope-v0.1.schema.json)).
+- [x] Draft RF/IP threat baseline and theoretical 1200-baud airtime floor ([security and airtime](docs/THREAT-MODEL-M0.md)).
+- [ ] Validate jurisdiction/mode-specific RF constraints and measure HF/IP/packet performance budgets.
+**Exit:** technology decision matrix and versioned request envelope are in draft; M0 remains open pending interoperability details, benchmark evidence and adapter validation.
 
 ## M0.5 — Winlink interoperability feasibility (next priority)
 - [x] Inventory existing kissterm client-side B2F implementation and documented experimental-CMS download (see [findings](docs/KISSTERM-B2F-FINDINGS.md)).
