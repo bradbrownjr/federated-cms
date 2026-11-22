@@ -51,7 +51,7 @@ All components are conceptual seams. The research protocol is [request envelope 
 
 ## Distinct interfaces to investigate
 
-1. **BPQ terminal ↔ local CMS text bridge:** a BPQ `APPLICATION` command or optional dedicated AX.25 application SSID routes via `C 9 HOST` and locally configured TCP/inetd. In the user's BPQ apps configuration, the connecting station callsign can arrive as the **first input line**; retain this unverified session context while enforcing separate authorization for private mail. This is **plain text**, not binary B2F. See [local BPQ interface RFC](BPQ-LOCAL-INTERFACE.md).
+1. **BPQ terminal ↔ local CMS text bridge:** a BPQ `APPLICATION` command or optional dedicated AX.25 application SSID routes via `C 9 HOST` and a configured local TCP port. Linux may use inetd/stdin-stdout; Windows BPQ32 uses a self-listening Python TCP bridge. In the user's BPQ apps configuration, the connecting station callsign can arrive as the **first input line**; retain this unverified session context while enforcing separate authorization for private mail. This is **plain text**, not binary B2F. See [local BPQ interface RFC](BPQ-LOCAL-INTERFACE.md).
 2. **Client ↔ RMS / independent B2F server:** reproduce the documented B2F/B2 session, using [kissterm](https://github.com/bradbrownjr/kissterm) as an initial reference test client. Existing client support is a test result, not an assumption.
 3. **RMS gateway ↔ CMS:** investigate live open-source gateway implementations such as [rmsgw](https://github.com/nwdigitalradio/rmsgw) and relevant BPQ integrations. This is **not necessarily B2F**.
 4. **CMS ↔ CMS:** a separate protocol design. Keep the application envelope independent of whether transport uses BPv7, libp2p, LXMF, or a simpler forwarding connection.
@@ -77,7 +77,7 @@ See [interoperability plan](WINLINK-INTEROPERABILITY.md) and [kissterm evidence]
 - **Application envelope:** IDs, expiry, requested service, response correlation, origin, budget and provenance. [Draft v0.1](REQUEST-ENVELOPE-v0.1.md).
 - **Local durable store:** SQLite is a test baseline; restart/power-loss behavior and backups require measurement.
 - **Peer transfer:** initial lab transport uses explicitly configured IP peers; replaceability is mandatory in the design, not a claim of deployed plugins.
-- **Link adapters:** B2F sessions, a BPQ local TCP/inetd ASCII terminal bridge (with first-line callsign context), NomadNet pages and future HF paths remain independent. BPQ's ordinary terminal route is not binary-safe.
+- **Link adapters:** B2F sessions, a BPQ local ASCII terminal bridge (Linux inetd/stdin-stdout or Windows self-listening TCP, both with first-line callsign context), NomadNet pages and future HF paths remain independent. BPQ's ordinary terminal route is not binary-safe.
 - **External delivery:** SMTP or existing mail transport is a privileged adapter with its own receipts and retry semantics.
 
 ## Security and regulatory boundaries
