@@ -51,12 +51,12 @@ All components are conceptual seams. The research protocol is [request envelope 
 
 ## Distinct interfaces to investigate
 
-0. **BPQ terminal ↔ local CMS text bridge:** a BPQ `APPLICATION` command or optional dedicated AX.25 application SSID routes via `C 9 HOST` and locally configured TCP/inetd. In the user's BPQ apps configuration, the connecting station callsign can arrive as the **first input line**; retain this unverified session context while enforcing separate authorization for private mail. This is **plain text**, not binary B2F. See [local BPQ interface RFC](BPQ-LOCAL-INTERFACE.md).
-1. **Client ↔ RMS / independent B2F server:** reproduce the documented B2F/B2 session, using [kissterm](https://github.com/bradbrownjr/kissterm) as an initial reference test client. Existing client support is a test result, not an assumption.
-2. **RMS gateway ↔ CMS:** investigate live open-source gateway implementations such as [rmsgw](https://github.com/nwdigitalradio/rmsgw) and relevant BPQ integrations. This is **not necessarily B2F**.
-3. **CMS ↔ CMS:** a separate protocol design. Keep the application envelope independent of whether transport uses BPv7, libp2p, LXMF, or a simpler forwarding connection.
-4. **CMS ↔ Internet:** SMTP and narrowly authorized information providers, not a general-purpose proxy.
-5. **BPQ/RNS application adapters:** reuse service handlers and caches, keep existing UIs and station identity rules intact.
+1. **BPQ terminal ↔ local CMS text bridge:** a BPQ `APPLICATION` command or optional dedicated AX.25 application SSID routes via `C 9 HOST` and locally configured TCP/inetd. In the user's BPQ apps configuration, the connecting station callsign can arrive as the **first input line**; retain this unverified session context while enforcing separate authorization for private mail. This is **plain text**, not binary B2F. See [local BPQ interface RFC](BPQ-LOCAL-INTERFACE.md).
+2. **Client ↔ RMS / independent B2F server:** reproduce the documented B2F/B2 session, using [kissterm](https://github.com/bradbrownjr/kissterm) as an initial reference test client. Existing client support is a test result, not an assumption.
+3. **RMS gateway ↔ CMS:** investigate live open-source gateway implementations such as [rmsgw](https://github.com/nwdigitalradio/rmsgw) and relevant BPQ integrations. This is **not necessarily B2F**.
+4. **CMS ↔ CMS:** a separate protocol design. Keep the application envelope independent of whether transport uses BPv7, libp2p, LXMF, or a simpler forwarding connection.
+5. **CMS ↔ Internet:** SMTP and narrowly authorized information providers, not a general-purpose proxy.
+6. **BPQ/RNS application adapters:** reuse service handlers and caches, keep existing UIs and station identity rules intact.
 
 See [interoperability plan](WINLINK-INTEROPERABILITY.md) and [kissterm evidence](KISSTERM-B2F-FINDINGS.md).
 
