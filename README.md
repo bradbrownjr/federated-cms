@@ -26,6 +26,8 @@ CMS is used here descriptively for **Common Message Server**; this project is in
 
 ## Related projects
 
+- [kissterm](https://github.com/bradbrownjr/kissterm): independent packet-radio mail client and terminal with an existing B2F implementation and documented experimental-CMS interoperability tests; useful as a reference client and test harness, not a Federated CMS component.
+
 - [bpq-apps](https://github.com/bradbrownjr/bpq-apps): packet-radio information applications and topology utilities.
 - [rns-apps](https://github.com/bradbrownjr/rns-apps): Reticulum/NomadNet applications and node discovery.
 
