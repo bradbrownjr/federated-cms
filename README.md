@@ -25,6 +25,7 @@ CMS is used here descriptively for **Common Message Server**; this project is in
 - [B2F interoperability investigation](docs/WINLINK-INTEROPERABILITY.md)
 - [kissterm interoperability findings](docs/KISSTERM-B2F-FINDINGS.md)
 - [M0 application integration inventory](docs/M0-APPLICATION-INVENTORY.md)
+- [BPQ local Telnet/SSID CMS interface (draft)](docs/BPQ-LOCAL-INTERFACE.md)
 - [M0 technology comparison and benchmark plan](docs/TECHNOLOGY-MATRIX.md)
 - [Request envelope v0.1 (draft)](docs/REQUEST-ENVELOPE-v0.1.md) ([JSON Schema](schema/envelope-v0.1.schema.json))
 - [M0 RF/IP threat model and airtime baseline](docs/THREAT-MODEL-M0.md)
