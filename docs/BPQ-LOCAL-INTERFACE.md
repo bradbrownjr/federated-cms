@@ -4,12 +4,13 @@
 
 ## Requirement
 
-An independently operated Federated CMS should be accessible **as an existing BPQ application**, without modifying the BPQ node or installing a special client on the operator's station. The same text-oriented CMS user experience should be testable over local Telnet. BPQ already exposes external applications via node commands and optionally their own AX.25 application callsign/SSID, and can pass the connecting station's callsign to the application as the first line of stdin.
+An independently operated Federated CMS should be accessible **as an existing BPQ application**, without modifying the BPQ node or installing a special client on the operator's station. The same text-oriented CMS user experience should be testable over local Telnet. BPQ already exposes external applications via node commands and optionally their own AX.25 application callsign/SSID, and can pass the connecting station's callsign as the first line of the application TCP stream (which is stdin when an inetd-style wrapper is used). **Both Linux LinBPQ and Windows BPQ32 must be supported**: Linux can use an inetd/stdio child per connection, whereas the normal Windows deployment needs a long-running Python process that opens/listens on the local TCP socket itself.
 
 This is **a separate interface from binary B2F**. Support both: ordinary BPQ terminal users via an ASCII application port, and Winlink-compatible software through a binary-clean B2F endpoint. Neither substitutes for investigating RMS-to-CMS interoperability.
 
 ## Verified precedent in the operator's repos
 
+- [BPQ author's application-interface documentation](https://www.cantab.net/users/john.wiseman/Documents/LinBPQ%20Applications%20Interface.html) explicitly states the TCP `CMDPORT`/`APPLICATION` mechanism also exists in Windows BPQ32, and documents forwarding the connecting callsign; it does **not** claim that BPQ automatically launches a Python interpreter.
 - [bpq-apps installation guide](https://github.com/bradbrownjr/bpq-apps/blob/main/docs/INSTALLATION.md) documents `inetd`, `/etc/services`, the BPQ Telnet `CMDPORT` table and `APPLICATION ..., C 9 HOST n` wiring. BPQ connects the session to a local TCP port; inetd redirects the connected socket to a spawned program's stdin/stdout.
 - [Example BPQ configuration](https://github.com/bradbrownjr/bpq-apps/blob/main/docs/examples/linbpq/bpq32.cfg) uses `PORTNUM=9`, a `CMDPORT` list with positional `HOST` indices, and `APPLICATION` lines. Some existing applications have dedicated application callsign/SSID entries, such as the sample `FORTUNE` app; node commands can reach the same backend.
 - [callout.py](https://github.com/bradbrownjr/bpq-apps/blob/main/apps/callout.py) concretely demonstrates reading `input().strip()` as the caller's BPQ-provided callsign on the **first line**, when configured to provide it. Depending on BPQ flags the supplied value may include SSID (e.g. `KC1JMH-8`).
@@ -31,8 +32,8 @@ Local node console or Telnet user ──────┘
                                                 │
                                       127.0.0.1:<port>
                                                 │
-                                 FCMS terminal bridge / session
-                                          ASCII lines only
+                             FCMS terminal bridge / session
+                                 ASCII lines only, shared core
                                                 │
                                      private CMS service API
                                                 │
@@ -43,7 +44,29 @@ Local node console or Telnet user ──────┘
 Separate binary-clean client endpoint ──────────────► B2F adapter
 ```
 
-The bridge can use inetd for one child process per connection or a standalone local TCP server for multiple sessions. It should not implement an alternate federation engine: both interfaces call the same CMS queue/mailbox/service APIs.
+### Cross-platform launch contract
+
+| Aspect | Linux LinBPQ with inetd | Windows BPQ32 without inetd |
+|---|---|---|
+| Who listens for the configured local TCP port? | inetd | FCMS Python bridge process |
+| When is the application process created? | By inetd for each accepted connection | Started beforehand; stays running and handles successive accepted sessions |
+| Where does client input/output go? | stdio inherited from connected socket | The connected socket's input/output streams |
+| First input line | BPQ-provided callsign if configured, otherwise unspecified | **Same protocol stream**: BPQ-provided callsign if configured |
+| BPQ configuration | A `CMDPORT` entry + `APPLICATION ..., C n HOST i` | **Same** `CMDPORT` + `APPLICATION` semantics |
+| Startup / recovery | inetd service and bridge executable | Startup task or service manager launches bridge; process health/restart required |
+| Direct localhost test | `telnet 127.0.0.1 <port>` | `telnet 127.0.0.1 <port>` with an installed Telnet client |
+
+**Preferred implementation:** one line-oriented `TerminalSession` handler fed by a pair of byte streams and an explicit `SessionContext`. A small `--stdio` entrypoint adapts stdin/stdout for inetd; a separate `--listen 127.0.0.1:<port>` entrypoint calls `bind()`, `listen()`, `accept()` (or equivalent Python `asyncio.start_server` / `socketserver` operations), then wraps each accepted socket in the same byte-stream interface. Do **not** fork the command parser or authorization rules by operating system. An embedded Python listener should also work on Linux for operators who prefer to avoid inetd.
+
+These command-line flags are **proposed**, not executable commands in the current repository. The listener is a bridge to the same independent CMS service, not a new instance of the message database or an alternate routing node.
+
+**Important operational distinction:** BPQ does *not* automatically execute the application when a remote user types the node command in this model. It **connects to an already listening TCP port**. Under Linux inetd, inetd is that listener and launches the script per session; on Windows, the independent bridge must already be running. If the port is absent, BPQ cannot deliver the session.
+
+**Concurrency:** support multiple independent terminal sessions; enforce a configurable concurrent-session cap and per-session read/idle/write timeouts. Connections must not block each other or share mutable `current_callsign`/command state. The CMS queue/database service remains separately serialized or transactional. Graceful Windows shutdown closes accepted sockets and the listener without discarding durably queued requests. On bridge restart the CMS daemon and its queued work remain intact.
+
+**Listener safety:** bind to `127.0.0.1` by default on both platforms, avoid exposing the port on LAN/public interfaces, select a free TCP port and set firewall rules. If BPQ runs on another machine, remote access is an explicitly configured, authenticated, protected backhaul—not an implicit public Telnet server. On Windows, use standard local process supervision (e.g., a suitably configured scheduled task/service) and least-privilege service account; installation is not yet specified.
+
+It should not implement an alternate federation engine: all entrypoints call the same CMS queue/mailbox/service APIs.
 
 ## User-facing behavior (proposed)
 
@@ -91,7 +114,7 @@ An offline node must accept the request durably and give the operator a short jo
 4. Treat station identifiers received over an RF node as **claimed/operator-context identity** unless a suitable separate identity/authorization mechanism exists. BPQ may accurately report the callsign associated with its AX.25 session, but the station's claimed on-air identity is not necessarily independently verified.
 5. Public read-only services may accept an unverified session with quotas and no secret response. Mailbox enumeration, message read/deletion, private results and SMTP sender delegation must require independent, approved account authorization. Do not prompt for or echo a reusable secret on ordinary amateur RF.
 6. For a later trusted BPQ identity assertion, use an authenticated **internal-only bridge-to-CMS API**, e.g. a protected Unix domain socket with per-service OS permissions, where the bridge records that BPQ provided the station identity. This improves attribution and prevents arbitrary network callers impersonating BPQ; it still does **not** cryptographically verify the transmitting operator over RF.
-7. Keep the local TCP listener bound to `127.0.0.1` or otherwise explicitly firewalled; **Telnet is unencrypted** and must never become a public Internet management or mailbox endpoint. A node hosted elsewhere would require a separately authorized protected backhaul, not a wildcard listener.
+7. Keep the local TCP listener bound to `127.0.0.1` on either operating system, or otherwise explicitly firewalled; **Telnet is unencrypted** and must never become a public Internet management or mailbox endpoint. A node hosted elsewhere would require a separately authorized protected backhaul, not a wildcard listener.
 8. Maintain a distinct **local sysop admin interface**. Do not permit terminal commands from RF to configure peers, authorize mailbox delegates, inspect other users' private mail, or administer egress credentials.
 
 If the same listener serves BPQ and direct Telnet tests, their first-line framing cannot identify the upstream unambiguously: begin both in the same **unprivileged** mode. For stronger origin labeling, configure a separate protected BPQ ingress/bridge mode versus a local diagnostic listener, with no upgrade to privileged mail operations on origin label alone.
@@ -115,7 +138,7 @@ CMDPORT ... 63180 63190
 APPLICATION 24,FCMS,C 9 HOST 19 K S
 ```
 
-**Do not copy** a literal ellipsis in `CMDPORT` into a production config; keep all installed entries and calculate the correct `HOST` index. The app's dedicated callsign/SSID is an optional part of LinBPQ's `APPLICATION` configuration. Select an available SSID and check local syntax/route ownership in LinBPQ's documentation; sample setups show the analogous trailing callsign/alias fields on `FORTUNE` and `RMS`. Do not reuse those existing SSIDs. The bridge executable named above is **not written yet**.
+**Do not copy** a literal ellipsis in `CMDPORT` into a production config; keep all installed entries and calculate the correct `HOST` index. The app's dedicated callsign/SSID is an optional part of LinBPQ's `APPLICATION` configuration. Select an available SSID and check local syntax/route ownership in LinBPQ's documentation; sample setups show the analogous trailing callsign/alias fields on `FORTUNE` and `RMS`. Do not reuse those existing SSIDs. The bridge executable named above is **not written yet**. **Windows BPQ32:** use the same `CMDPORT` and `APPLICATION` entries but do **not** configure Linux `/etc/services` or `/etc/inetd.conf`; instead start the future self-listening Python bridge bound to `127.0.0.1:63190` before BPQ tries to connect. Use a chosen unused TCP port; Windows startup/service management and executable packaging are separate implementation tasks.
 
 For initial tests, the operator can directly Telnet to the bound service on localhost, then use `FCMS` from the BPQ node; only after confirming callsign delivery and ASCII behavior should authorized RF and direct SSID tests be considered.
 
@@ -129,18 +152,20 @@ For initial tests, the operator can directly Telnet to the bound service on loca
 
 ## Acceptance tests
 
-1. Direct Telnet / loopback shows help and closes cleanly; ASCII CR, LF, CRLF variants and short line handling work without terminal escapes.
-2. Simulated BPQ caller first line `KC1JMH-8` is recorded; base `KC1JMH` and SSID `8` available without losing the original.
+1. Direct Telnet / loopback shows help and closes cleanly; ASCII CR, LF, CRLF variants and short line handling work without terminal escapes, using **both** the inetd/stdio adapter and self-listening TCP adapter.
+2. Simulated BPQ caller first line `KC1JMH-8` is recorded via either entrypoint; base `KC1JMH` and SSID `8` available without losing the original. Subsequent sessions and concurrent callers cannot reuse another session's identity.
 3. A missing initial callsign or direct Telnet spoofing attempt never grants access to another operator's private mailbox.
 4. Node command `FCMS` and direct app SSID (configured separately) arrive at the **same** bounded text service and receive equivalent behavior.
 5. Offline `WX` returns a committed queue ID before an acknowledgement; after reconnection the authorized request owner can retrieve an attributed/stale-marked result.
 6. B2F binary framing is never routed over the conventional BPQ terminal/inetd path.
 7. Overlong lines, terminal control bytes, malformed callsigns, flooding, abandoned sessions and high output volume fail safely.
 8. The node and application continue functioning if the independent CMS daemon is down; show a concise unavailable message rather than hanging.
+9. **Windows-specific:** standalone listener binds to loopback; BPQ connects to the configured port, passes the callsign and closes; two users can connect simultaneously without shared session state. If the listener is stopped, verify a clean BPQ error; on restart, existing queued work survives. Test process startup and missing-listener cases.
+10. **Linux-specific:** inetd starts one stdio bridge per inbound connection. Check equivalent visible responses and authorization behavior between Linux and Windows using identical prerecorded session fixtures.
 
 ## Work split
 
-- **M0:** Document BPQ ingress, callsign provenance, dedicated SSID path, text-mode transport limits and security requirements (**this document**).
+- **M0:** Document BPQ ingress, callsign provenance, dedicated SSID path, cross-platform inetd/own-socket launch modes, text-mode transport limits and security requirements (**this document**).
 - **M0.5:** Independent binary B2F server/interoperability testing remains separate.
-- **M1:** Add a localhost-only text interface or `stdio` bridge to submit a weather request and retrieve queued result from the durable store.
-- **M3:** Validate with a real LinBPQ node command and a dedicated AX.25 application SSID, then add broader BPQ service integration and RF-efficiency measurements.
+- **M1:** Implement the shared terminal session core with **both** `--stdio` (Linux inetd) and `--listen` (Windows native socket, also usable on Linux) harnesses to submit a weather request and retrieve queued result from the durable store.
+- **M3:** Validate with a real LinBPQ node command and dedicated AX.25 application SSID, plus Windows BPQ32 CMDPORT connection and callsign injection; then add broader BPQ service integration and RF-efficiency measurements.
