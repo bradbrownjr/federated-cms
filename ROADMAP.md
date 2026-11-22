@@ -1,6 +1,6 @@
 # Research roadmap
 
-All milestones are proposed, not completed. Prefer reproducible evidence to feature count.
+Milestone exit gates remain open until demonstrated. Checked items denote completed research deliverables, not an implemented CMS or proven interoperability. Prefer reproducible evidence to feature count.
 
 ## M0 — Inventory and requirements
 - [x] Inventory BPQ/RNS service candidates and verify selected source interfaces ([inventory](docs/M0-APPLICATION-INVENTORY.md)).
