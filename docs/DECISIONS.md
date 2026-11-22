@@ -11,6 +11,12 @@
 - **Reuse:** bpq-apps and rns-apps remain standalone; integrate through adapters.
 - **Research:** federation technology is not selected until benchmarked.
 
+## Provisional laboratory direction — 2026-11-22
+
+This is **not** an accepted choice of permanent federation stack. For M0.5, prioritize a localhost-only independent B2F endpoint and mailbox roundtrip using kissterm and Pat. For the M1/M2 simulator, provisionally use a minimal explicit-peer IP transfer and SQLite queues to test persistence, routing and replay behavior while preserving replaceable `PeerTransport`/store interfaces.
+
+The M0 [technology matrix](TECHNOLOGY-MATRIX.md), [versioned request envelope](REQUEST-ENVELOPE-v0.1.md), [formal JSON Schema](../schema/envelope-v0.1.schema.json), and [threat/airtime baseline](THREAT-MODEL-M0.md) are drafts to test. **No performance winner, RF deployment authorization, or interoperability guarantee is declared.** Production adoption requires measured results and a separate accepted decision record.
+
 ## Open decisions
 
 - BPv7 versus a smaller transfer envelope.
