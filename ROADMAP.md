@@ -5,7 +5,7 @@ Milestone exit gates remain open until demonstrated. Checked items denote comple
 ## M0 — Inventory and requirements
 - [x] Inventory BPQ/RNS service candidates and verify selected source interfaces ([inventory](docs/M0-APPLICATION-INVENTORY.md)).
 - [ ] Complete BPQ/RNS service-handler extraction, authorization review and adapter tests.
-- [x] Specify a localhost BPQ/Telnet terminal entrypoint, caller callsign handoff, node-command/SSID access and trust boundaries ([local interface RFC](docs/BPQ-LOCAL-INTERFACE.md)).
+- [x] Specify cross-platform BPQ/Telnet terminal entrypoints (Linux inetd/stdio and Windows self-listening TCP), caller callsign handoff, node-command/SSID access and trust boundaries ([local interface RFC](docs/BPQ-LOCAL-INTERFACE.md)).
 - [ ] Complete Winlink CMS/client interoperability boundary investigation, especially RMS-to-CMS ([research plan](docs/WINLINK-INTEROPERABILITY.md)).
 - [x] Write a qualitative comparison of BPv7/ION, libp2p, Reticulum/LXMF, UUCP-style and minimal forwarding ([technology matrix](docs/TECHNOLOGY-MATRIX.md)).
 - [ ] Benchmark at least one standard DTN implementation against minimal store-and-forward, including resource and actual byte costs.
@@ -25,7 +25,7 @@ Milestone exit gates remain open until demonstrated. Checked items denote comple
 **Exit:** documented compatibility matrix and go/no-go recommendation for preserving existing clients and gateways. See [research plan](docs/WINLINK-INTEROPERABILITY.md).
 
 ## M1 — Three-node information-request simulation
-- [ ] Prototype a localhost text/stdio interface that queues a weather request and returns an authorized result or status ([BPQ interface RFC](docs/BPQ-LOCAL-INTERFACE.md)); retain separate binary B2F endpoint.
+- [ ] Prototype one shared localhost terminal session handler with both Linux inetd/stdio and Windows self-listening TCP launch modes; queue a weather request and return an authorized result or status ([BPQ interface RFC](docs/BPQ-LOCAL-INTERFACE.md)); retain separate binary B2F endpoint.
 - [ ] Independently configured nodes with persistent local queues and no mandatory coordinator.
 - [ ] Client requests weather or RSS from a node lacking Internet.
 - [ ] Discover a reachable node with Internet egress or cached content.
@@ -40,7 +40,7 @@ Milestone exit gates remain open until demonstrated. Checked items denote comple
 **Exit:** fault-injection results with delivery, recovery and airtime metrics.
 
 ## M3 — BPQ and RNS adapters
-- [ ] Validate BPQ node command and dedicated application SSID routes through local TCP/inetd bridge; confirm callsign-first-line behavior and private-mail authorization ([BPQ interface RFC](docs/BPQ-LOCAL-INTERFACE.md)).
+- [ ] Validate Linux LinBPQ and Windows BPQ32 node-command and dedicated application-SSID routes; confirm callsign-first-line behavior, bridge concurrency and private-mail authorization ([BPQ interface RFC](docs/BPQ-LOCAL-INTERFACE.md)).
 - [ ] BPQ terminal: submit requests, check status, retrieve results.
 - [ ] NomadNet/RNS: equivalent requests through existing page interfaces.
 - [ ] Share service definitions for weather, RSS, Gopher, text web and bulletins.
