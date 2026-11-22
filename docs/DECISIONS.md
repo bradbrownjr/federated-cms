@@ -9,6 +9,7 @@
 - **Offline-first:** cache locally, queue durably, reconcile after partitions, and label stale data.
 - **Multi-application:** mail and information retrieval are equal first-class workloads.
 - **Reuse:** bpq-apps and rns-apps remain standalone; integrate through adapters.
+- **BPQ native access:** provide a local, line-oriented TCP/inetd terminal bridge accessible by node command or an optional dedicated application SSID. BPQ can pass the connecting station callsign as the first input line; treat it as caller context rather than sufficient mailbox authentication. Keep binary B2F separate. See [interface RFC](BPQ-LOCAL-INTERFACE.md).
 - **Research:** federation technology is not selected until benchmarked.
 
 ## Provisional laboratory direction — 2026-11-22
