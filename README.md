@@ -28,6 +28,5 @@ CMS is used here descriptively for **Common Message Server**; this project is in
 
 - [bpq-apps](https://github.com/bradbrownjr/bpq-apps): packet-radio information applications and topology utilities.
 - [rns-apps](https://github.com/bradbrownjr/rns-apps): Reticulum/NomadNet applications and node discovery.
-- [AFIM](https://github.com/bradbrownjr/afim): separate analog-FM metadata research, not a dependency.
 
 Distinguish **implemented**, **demonstrated**, **proposed**, and **unverified** capabilities in all contributions.
