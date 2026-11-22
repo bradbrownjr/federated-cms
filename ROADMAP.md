@@ -10,7 +10,9 @@ All milestones are proposed, not completed. Prefer reproducible evidence to feat
 **Exit:** technology decision matrix and versioned request envelope.
 
 ## M0.5 — Winlink interoperability feasibility (next priority)
-- [ ] Trace Open B2F client/RMS sessions and authentication using Pat and wl2k-go.
+- [x] Inventory existing kissterm client-side B2F implementation and documented experimental-CMS download (see [findings](docs/KISSTERM-B2F-FINDINGS.md)).
+- [ ] Reuse kissterm protocol fixtures to build an offline, minimal independent B2F server and test with kissterm and Pat.
+- [ ] Cross-check B2F client/RMS behavior against Pat and wl2k-go.
 - [ ] Inspect Linux RMS Gateway source for actual RMS-to-CMS transport, configuration and dependencies.
 - [ ] Test independent B2F endpoint with Pat in an isolated lab.
 - [ ] Determine whether unmodified RMS software can use a self-hosted CMS; record blockers and alternatives.
