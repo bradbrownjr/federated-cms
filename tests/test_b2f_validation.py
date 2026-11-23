@@ -57,6 +57,7 @@ class B2ValidationTests(unittest.TestCase):
                             self.assertEqual(line(reader), b"FS +")
                             client.sendall(b"\x01\x06Lab\x000\x00" + bytes((2, len(compressed))) + compressed + bytes((4, -sum(compressed) & 255)))
                             self.assertEqual(line(reader), b"*** Protocol error")
+                            self.assertEqual(reader.read(), b"")
                     self.assertIsNone(mailbox_call(store, "TEST1", "get", "TEST123", "in"))
                 finally:
                     server.shutdown()

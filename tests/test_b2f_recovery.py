@@ -57,6 +57,8 @@ class KisstermRecoveryTests(unittest.TestCase):
                 output = client.take_output()
                 if output:
                     conn.sendall(output)
+            while conn.recv(4096):
+                pass  # EOF follows the server's mailbox-session release.
         self.assertEqual(client.error, "")
         return client.take_events()
 

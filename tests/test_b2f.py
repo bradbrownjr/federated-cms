@@ -116,6 +116,9 @@ class B2FLabTests(unittest.TestCase):
                                 if response:
                                     client.sendall(response)
                                     self._line(reader)
+                                    if response == b"FF\r":
+                                        client.sendall(b"FQ\r")
+                                    self.assertEqual(reader.read(), b"")
                                 else:
                                     client.shutdown(socket.SHUT_WR)
                                     reader.read()
@@ -144,6 +147,7 @@ class B2FLabTests(unittest.TestCase):
                             self.assertEqual(self._line(reader), b"FS -")
                             self.assertEqual(self._line(reader), b"FF")
                             client.sendall(b"FQ\r")
+                            self.assertEqual(reader.read(), b"")
                     self.assertEqual(mailbox_call(store, "TEST1", "get", "TEST123", "in"), original)
                 finally:
                     server.shutdown()
@@ -169,6 +173,7 @@ class B2FLabTests(unittest.TestCase):
                             self.assertTrue(self._line(reader).startswith(b"F> "))
                             client.sendall(b"FS -?\r")
                             self.assertEqual(self._line(reader), b"*** Protocol error")
+                            self.assertEqual(reader.read(), b"")
                     self.assertEqual([mid for mid, _ in mailbox_call(store, "TEST1", "pending")], ["TEST123", "TEST456"])
                 finally:
                     server.shutdown()
@@ -259,6 +264,8 @@ class B2FLabTests(unittest.TestCase):
                                 output = client.take_output()
                                 if output:
                                     conn.sendall(output)
+                            while conn.recv(4096):
+                                pass  # Wait for server-side session release and EOF.
                             events = client.take_events()
                             self.assertEqual(client.error, "")
                             self.assertEqual([e.mid for e in events if isinstance(e, Sent)], [incoming.mid])

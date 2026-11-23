@@ -20,6 +20,12 @@ from tests.lab_mailbox_helpers import mailbox_call
 
 class _PatShim(socketserver.BaseRequestHandler):
     def handle(self):
+        try:
+            self.handle_session()
+        finally:
+            self.server.session_done.set()
+
+    def handle_session(self):
         self.request.settimeout(10)
         # One-byte reads avoid consuming any subsequent B2F bytes.
         def read_line():
@@ -44,6 +50,10 @@ class _PatShim(socketserver.BaseRequestHandler):
 class _Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    def __init__(self, *args, **kwargs):
+        self.session_done = threading.Event()
+        super().__init__(*args, **kwargs)
 
 
 @unittest.skipUnless(os.environ.get("FCMS_PAT_BINARY"), "set FCMS_PAT_BINARY to run Pat integration")
@@ -92,6 +102,7 @@ class PatInteropTests(unittest.TestCase):
                 try:
                     url = f"telnet://N0CALL:lab-only@127.0.0.1:{server.server_address[1]}/WL2K"
                     result = subprocess.run(options + ["connect", url], text=True, capture_output=True, env=env, timeout=30)
+                    self.assertTrue(server.session_done.wait(3), "Pat session did not finish")
                 finally:
                     server.shutdown()
                     thread.join()
