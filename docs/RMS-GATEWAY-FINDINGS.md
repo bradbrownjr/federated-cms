@@ -1,9 +1,11 @@
 # Linux RMS Gateway: source-level CMS interface findings
 
-**Status:** source inspection only, not an interoperability test. Inspected
+**Status:** source inspection, isolated login-routine testing, and full gateway
+process login and binary relay against a mock CMS. End-to-end B2F through the
+gateway and AX.25 remain untested. Inspected
 [`nwdigitalradio/rmsgw` commit `3147f017545f43c4b83ef6a037b8b0e38d0719af`](https://github.com/nwdigitalradio/rmsgw/tree/3147f017545f43c4b83ef6a037b8b0e38d0719af)
-(declared version 2.5.1). No gateway was run, no production Winlink endpoint
-was contacted, and no credentials or RF equipment were used. These findings
+(declared version 2.5.1). No production Winlink endpoint
+was contacted, and no real credentials or RF equipment were used. These findings
 apply to that source revision, not every Linux RMS, BPQ, or RMS gateway.
 
 ## Finding
@@ -87,13 +89,48 @@ cannot by itself establish the inspected gateway session.
   checks compiler, libxml2 and ncurses. Treat historical version requirements
   as unverified until an isolated build is attempted.
 
-## Next isolated experiment
+## Next end-to-end experiment
 
-Create a separate test-only gateway login adapter and an isolated gateway
-configuration whose only host is loopback. Use synthetic callsigns, passwords,
-and B2 messages. Disable reporting, hooks and RF paths; enforce isolation from
-production destinations. Test both valid and invalid `;SQ:` / `;SR:` gateway
-logins before allowing a distinct client B2F session, and verify byte-for-byte
-binary forwarding, fragmentation, disconnect and failure handling. Reproduce
-the actual gateway process and its launch context before making a compatibility
-claim. The existing client-only B2F and Pat-shim tests do not satisfy this gate.
+Connect a real B2F client through the actual gateway process to a separate,
+test-only gateway login adapter and local B2F server. Use synthetic callsigns,
+passwords, and B2 messages. Disable reporting, hooks and RF paths; enforce
+isolation from production destinations. Validate gateway login separately
+from the client B2F session, then verify exchange and persisted retrieval.
+The mock relay and existing client-only tests do not satisfy this gate.
+
+## Isolated upstream login-routine experiment
+
+`tests/test_rmsgw_login.py` compiles the pinned upstream `cmslogin.c`,
+`sglchallenge.c`, `readln.c`, and `md5.c` into a small test harness. Set
+`FCMS_RMSGW_SOURCE` to a clean checkout of the pinned revision and run
+`PYTHONPATH=src python -m unittest tests.test_rmsgw_login -v`. The test requires
+a Linux C compiler and uses a temporary build directory. It does not write to
+the checkout. All interactions use an AF_UNIX socketpair, synthetic callsigns
+and disposable fixture passwords, with debug syslog disabled. No gateway
+configuration, IP sockets, hooks, production services or RF are involved.
+
+Tests verify fragmented callsign and challenge prompts, a known response
+vector, an unexpected challenge prefix, and disconnect before the challenge.
+The inspected upstream routine accepts an eight-character nonnumeric challenge
+after `;SQ:` and produces a response; a lab server must validate its own
+challenge format and not infer gateway-side validation from the prefix check.
+The wrong-password test also demonstrates that upstream `cmslogin()` returns
+success after sending its response without waiting for server acceptance. The
+test fixture—not the upstream routine—recognizes the response as incorrect.
+This validates the isolated upstream function only, not the full gateway
+process, a Federated CMS gateway adapter, binary relay, or interoperability.
+
+## Isolated full-process relay experiment
+
+The optional Linux harness in `tests/rmsgw_full/` builds the pinned gateway
+from a Git archive and starts its actual main, session and relay code inside
+private user, network, IPC and mount namespaces. A synthetic local CMS checks
+the gateway login; an AF_UNIX socketpair simulates the client stream. The
+experiment verifies a valid login, rejection of an incorrect fixture secret,
+all 256 byte values and fragments in both directions, and clean exit after
+the mock CMS disconnects. See the harness README for prerequisites, isolation
+details and the guarded entrypoint.
+
+This is evidence of the gateway's behavior against the mock only. It does not
+exercise AX.25, a real B2F client through the gateway, a Federated CMS gateway
+adapter, or production authentication. Those remain separate test goals.
