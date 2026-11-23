@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from federated_cms import CMSCore, SQLiteStore
+from federated_cms.core import utc_now, wire_time
 from federated_cms.store import StoreUnavailable
 
 
@@ -37,6 +38,22 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(two.duplicate)
         self.assertEqual(two.request_id, one.request_id)
         self.assertEqual(core.process_pending(), 1)
+
+    def test_duplicate_key_is_scoped_to_owner(self):
+        core = make_core(self.path)
+        one = core.submit_weather("FN43", "scope-a", idempotency_key="same-key")
+        two = core.submit_weather("FN43", "scope-b", idempotency_key="same-key")
+        self.assertNotEqual(one.request_id, two.request_id)
+        self.assertFalse(two.duplicate)
+
+    def test_expired_processing_lease_is_recovered(self):
+        core = make_core(self.path)
+        receipt = core.submit_weather("FN43", "scope-a")
+        now = wire_time(utc_now())
+        claimed = core.store.claim_next(now, now)
+        self.assertEqual(claimed["id"], receipt.request_id)
+        recovered = core.store.claim_next(now, wire_time(utc_now() + timedelta(seconds=30)))
+        self.assertEqual(recovered["id"], receipt.request_id)
 
     def test_expiration_prevents_execution(self):
         core = make_core(self.path)

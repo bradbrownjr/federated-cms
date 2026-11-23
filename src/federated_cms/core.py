@@ -39,16 +39,16 @@ class CMSCore:
                    "cache_policy": "allow_stale", "fcm_version": "0.1"}
         # Callers control dedup only when they explicitly supply an idempotency key.
         key = idempotency_key or str(uuid.uuid4())
-        digest = hashlib.sha256(("weather.forecast\0" + key + "\0" + json.dumps(payload, sort_keys=True)).encode()).hexdigest()
+        digest = hashlib.sha256((owner_scope + "\0weather.forecast\0" + key + "\0" + json.dumps(payload, sort_keys=True)).encode()).hexdigest()
         receipt = self.store.enqueue_request(request_id=str(uuid.uuid4()), dedup_key=digest, owner_scope=owner_scope,
                                              service="weather.forecast", payload=payload, created_at=wire_time(now),
-                                             expires_at=wire_time(now + ttl))
+                                             expires_at=wire_time(now + ttl), public=True)
         return receipt
 
     def process_pending(self) -> int:
         """Run local deterministic handlers. Future peer workers use this same API."""
         done = 0
-        while row := self.store.claim_next(wire_time(utc_now())):
+        while row := self.store.claim_next(wire_time(utc_now()), wire_time(utc_now() + timedelta(seconds=30))):
             payload = json.loads(row["payload_json"])
             try:
                 if row["service"] != "weather.forecast":
@@ -79,6 +79,9 @@ class CMSCore:
 
     def request(self, request_id: str, owner_scope: str) -> RequestView | None:
         return self.store.get_request(request_id, owner_scope)
+
+    def public_request(self, request_id: str) -> RequestView | None:
+        return self.store.get_public_request(request_id)
 
     def jobs(self, owner_scope: str) -> list[RequestView]:
         return self.store.list_requests(owner_scope)

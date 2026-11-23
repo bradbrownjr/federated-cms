@@ -59,31 +59,37 @@ class SQLiteStore:
                     owner_scope TEXT NOT NULL, service TEXT NOT NULL, payload_json TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('queued','processing','completed','failed','expired')),
                     created_at TEXT NOT NULL, expires_at TEXT NOT NULL, result_json TEXT,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL, public INTEGER NOT NULL DEFAULT 0,
+                    processing_lease_until TEXT
                 );
                 CREATE INDEX IF NOT EXISTS requests_owner_created ON requests(owner_scope, created_at DESC);
                 CREATE INDEX IF NOT EXISTS requests_status_expiry ON requests(status, expires_at);
                 """)
+                columns = {row["name"] for row in con.execute("PRAGMA table_info(requests)")}
+                if "public" not in columns:
+                    con.execute("ALTER TABLE requests ADD COLUMN public INTEGER NOT NULL DEFAULT 0")
+                if "processing_lease_until" not in columns:
+                    con.execute("ALTER TABLE requests ADD COLUMN processing_lease_until TEXT")
         except sqlite3.Error as exc:
             raise StoreUnavailable("database initialization failed") from exc
 
     def enqueue_request(self, *, request_id: str, dedup_key: str, owner_scope: str,
                         service: str, payload: dict[str, Any], created_at: str,
-                        expires_at: str) -> RequestReceipt:
+                        expires_at: str, public: bool = False) -> RequestReceipt:
         try:
             with self._connect() as con:
                 con.execute("BEGIN IMMEDIATE")
                 row = con.execute("SELECT id, status FROM requests WHERE dedup_key = ?", (dedup_key,)).fetchone()
                 if row:
                     con.execute("COMMIT")
-                    return RequestReceipt(row["id"], row["status"], True)
+                    return RequestReceipt(row["id"], row["status"], True, public)
                 con.execute("""INSERT INTO requests
-                    (id,dedup_key,owner_scope,service,payload_json,status,created_at,expires_at,updated_at)
-                    VALUES (?,?,?,?,?,'queued',?,?,?)""",
+                    (id,dedup_key,owner_scope,service,payload_json,status,created_at,expires_at,updated_at,public)
+                    VALUES (?,?,?,?,?,'queued',?,?,?,?)""",
                     (request_id, dedup_key, owner_scope, service, json.dumps(payload, sort_keys=True),
-                     created_at, expires_at, created_at))
+                     created_at, expires_at, created_at, int(public)))
                 con.execute("COMMIT")
-                return RequestReceipt(request_id, "queued", False)
+                return RequestReceipt(request_id, "queued", False, public)
         except sqlite3.Error as exc:
             raise StoreUnavailable("request was not durably accepted") from exc
 
@@ -108,15 +114,18 @@ class SQLiteStore:
         except sqlite3.Error as exc:
             raise StoreUnavailable("database unavailable") from exc
 
-    def claim_next(self, now: str) -> sqlite3.Row | None:
-        """Atomically claim one non-expired queued job, or mark stale jobs expired."""
+    def claim_next(self, now: str, lease_until: str) -> sqlite3.Row | None:
+        """Atomically claim work and recover expired processing leases after a crash."""
         try:
             with self._connect() as con:
                 con.execute("BEGIN IMMEDIATE")
                 con.execute("UPDATE requests SET status='expired', updated_at=? WHERE status IN ('queued','processing') AND expires_at <= ?", (now, now))
+                con.execute("""UPDATE requests SET status='queued', processing_lease_until=NULL, updated_at=?
+                               WHERE status='processing' AND expires_at > ? AND processing_lease_until <= ?""",
+                            (now, now, now))
                 row = con.execute("SELECT * FROM requests WHERE status='queued' AND expires_at > ? ORDER BY created_at LIMIT 1", (now,)).fetchone()
                 if row:
-                    con.execute("UPDATE requests SET status='processing', updated_at=? WHERE id=?", (now, row["id"]))
+                    con.execute("UPDATE requests SET status='processing', processing_lease_until=?, updated_at=? WHERE id=?", (lease_until, now, row["id"]))
                     row = con.execute("SELECT * FROM requests WHERE id=?", (row["id"],)).fetchone()
                 con.execute("COMMIT")
                 return row
@@ -129,7 +138,7 @@ class SQLiteStore:
         try:
             with self._connect() as con:
                 con.execute("BEGIN IMMEDIATE")
-                con.execute("UPDATE requests SET status=?, result_json=?, updated_at=? WHERE id=? AND status='processing'",
+                con.execute("UPDATE requests SET status=?, result_json=?, processing_lease_until=NULL, updated_at=? WHERE id=? AND status='processing'",
                             (status, json.dumps(result, sort_keys=True), now, request_id))
                 con.execute("COMMIT")
         except sqlite3.Error as exc:
@@ -139,6 +148,15 @@ class SQLiteStore:
         try:
             with self._connect() as con:
                 row = con.execute("SELECT * FROM requests WHERE id=? AND owner_scope=?", (request_id, owner_scope)).fetchone()
+                return self._view(row) if row else None
+        except sqlite3.Error as exc:
+            raise StoreUnavailable("database unavailable") from exc
+
+    def get_public_request(self, request_id: str) -> RequestView | None:
+        """Public terminal requests are safe to recover by their random receipt ID."""
+        try:
+            with self._connect() as con:
+                row = con.execute("SELECT * FROM requests WHERE id=? AND public=1", (request_id,)).fetchone()
                 return self._view(row) if row else None
         except sqlite3.Error as exc:
             raise StoreUnavailable("database unavailable") from exc

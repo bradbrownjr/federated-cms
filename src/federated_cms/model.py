@@ -9,6 +9,7 @@ class RequestReceipt:
     request_id: str
     status: str
     duplicate: bool
+    public: bool = False
 
 
 @dataclass(frozen=True)

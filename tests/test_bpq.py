@@ -48,6 +48,18 @@ class TerminalTests(unittest.TestCase):
         self.assertIn("Bye.", result)
         self.assertEqual(parse_callsign("KC1JMH-8"), ("KC1JMH-8", "KC1JMH", "8"))
 
+    def test_first_line_command_is_not_mistaken_for_callsign(self):
+        result = transcript(make_core(self.path / "a.sqlite"), "HELP\nQUIT\n")
+        self.assertIn("HELP STATUS SERVICES", result)
+        self.assertNotIn("Station: HELP", result)
+
+    def test_public_weather_result_survives_reconnect(self):
+        core = make_core(self.path / "a.sqlite")
+        first = transcript(core, "WX FN43\nQUIT\n")
+        request_id = next(line.split(": ", 1)[1] for line in first.splitlines() if line.startswith("Request queued:"))
+        second = transcript(make_core(self.path / "a.sqlite"), f"RESULT {request_id}\nQUIT\n")
+        self.assertIn("TEST DATA: Weather for FN43", second)
+
     def test_invalid_and_oversized_input(self):
         result = transcript(make_core(self.path / "a.sqlite"), "HELP\n" + "X" * 300 + "\nNOPE\nQUIT\n")
         self.assertIn("ERR line too long", result)

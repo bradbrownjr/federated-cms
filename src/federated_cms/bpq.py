@@ -17,7 +17,9 @@ from .core import CMSCore
 from .store import SQLiteStore, StoreUnavailable
 
 MAX_LINE = 256
-CALLSIGN = re.compile(r"^([A-Z0-9]{1,6})(?:-([0-9]{1,2}))?$", re.I)
+# A practical BPQ callsign screen: at least one letter and one digit.  This
+# intentionally rejects terminal verbs such as HELP and STATUS.
+CALLSIGN = re.compile(r"^(?=[A-Z0-9-]{1,9}$)(?=.*[A-Z])(?=.*[0-9])([A-Z0-9]{1,6})(?:-([0-9]{1,2}))?$", re.I)
 
 
 @dataclass(frozen=True)
@@ -51,8 +53,14 @@ class TerminalSession:
         if not raw:
             return None
         if len(raw) > MAX_LINE and not raw.endswith((b"\n", b"\r")):
-            # Discard remainder; do not let it become commands.
-            self.reader.readline()
+            # Drain a bounded amount only. If no terminator appears, close the
+            # session instead of allowing an unbounded allocation/read.
+            for _ in range(4096):
+                if self.reader.read(1) in {b"", b"\n", b"\r"}:
+                    break
+            else:
+                self._write("ERR line too long; disconnecting")
+                return None
             self._write("ERR line too long")
             return ""
         try:
@@ -113,7 +121,7 @@ class TerminalSession:
                 if len(bits) != 2:
                     self._write("ERR usage: RESULT <request-id>")
                 else:
-                    view = self.core.request(bits[1].lower(), self.context.scope)
+                    view = self.core.request(bits[1].lower(), self.context.scope) or self.core.public_request(bits[1].lower())
                     if not view:
                         self._write("ERR request not found or not permitted")
                     elif view.result and view.result.get("status") == "ok":
@@ -141,9 +149,19 @@ class _TCPHandler(socketserver.BaseRequestHandler):
 class CMSListener(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
-    def __init__(self, address: tuple[str, int], core: CMSCore, idle_timeout: float = 120.0):
+    def __init__(self, address: tuple[str, int], core: CMSCore, idle_timeout: float = 120.0, max_sessions: int = 16):
         self.core, self.idle_timeout = core, idle_timeout
+        self._session_slots = threading.BoundedSemaphore(max_sessions)
         super().__init__(address, _TCPHandler)
+
+    def verify_request(self, request: object, client_address: object) -> bool:
+        return self._session_slots.acquire(blocking=False)
+
+    def process_request_thread(self, request: object, client_address: object) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._session_slots.release()
 
 
 def make_core(database: str) -> CMSCore:

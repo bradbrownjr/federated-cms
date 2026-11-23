@@ -24,6 +24,9 @@ python -m federated_cms.bpq --listen 127.0.0.1:63190 --database fcms.sqlite3
 Connect with a local terminal, send `KC1JMH-8` as the first line if simulating
 BPQ, then use `WX FN43`, `JOBS`, and `RESULT <id>`. Results are deliberately
 synthetic and labeled `TEST DATA`. The database is retained across restarts.
+Weather is public test data: its random request ID is a receipt capability, so
+`RESULT <id>` works after reconnecting. Private mailbox data is never exposed
+through this terminal before a separate authentication/delegation design exists.
 
 For Linux inetd mode, use the same database path visible to the inetd account:
 
@@ -69,5 +72,6 @@ not all request-envelope JSON; a future B2F adapter maps protocol operations to
 this API, while its binary-clean listener remains separate from BPQ terminal I/O.
 
 An apparent BPQ callsign is recorded only as session display context. A random
-session scope limits `JOBS` and `RESULT` to work created within that session; a
-new connection cannot recover another session's work by claiming its callsign.
+session scope limits `JOBS` to work created within that session; a new
+connection cannot enumerate another session's work by claiming its callsign.
+Only explicitly public weather receipts are retrievable by request ID.
