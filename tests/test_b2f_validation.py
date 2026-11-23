@@ -9,6 +9,7 @@ from federated_cms import lzhuf
 from federated_cms.b2f import LabServer, ProtocolError, message_mid, proposal_checksum
 from federated_cms.b2f_auth import login_response
 from federated_cms.store import SQLiteStore
+from tests.lab_mailbox_helpers import mailbox_call
 
 
 def line(reader):
@@ -56,7 +57,7 @@ class B2ValidationTests(unittest.TestCase):
                             self.assertEqual(line(reader), b"FS +")
                             client.sendall(b"\x01\x06Lab\x000\x00" + bytes((2, len(compressed))) + compressed + bytes((4, -sum(compressed) & 255)))
                             self.assertEqual(line(reader), b"*** Protocol error")
-                    self.assertIsNone(store.b2f_lab_get("TEST1", "TEST123", "in"))
+                    self.assertIsNone(mailbox_call(store, "TEST1", "get", "TEST123", "in"))
                 finally:
                     server.shutdown()
                     worker.join()

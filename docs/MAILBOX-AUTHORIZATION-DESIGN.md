@@ -1,8 +1,8 @@
 # Mailbox identity and authorization: design proposal
 
 **Status: draft for review; not implemented or approved for production.**
-The current B2F endpoint is a loopback-only laboratory. Its single configured
-test account and `b2f_lab_messages` table do not implement this design.
+The B2F endpoint is a loopback-only laboratory. Its single configured test
+account and synthetic shared mailbox service do not implement this design.
 
 ## Scope and threat boundary
 
@@ -84,8 +84,8 @@ be detected from that exchange alone. A receipt proves only the stated local
 or peer acceptance, not end-to-end delivery.
 
 The existing `messages` table stores text rather than raw B2 and attachments;
-`b2f_lab_messages` has no grants or authenticated delivery claims. Neither is a
-production mailbox API. A migration must preserve byte-exact B2 data and avoid
+the shared lab mailbox has no production grants or authenticated delivery claims.
+Neither is a production mailbox API. A migration must preserve byte-exact B2 data and avoid
 promoting lab fixtures into private user mailboxes or treating an old callsign
 as verified identity. Use an explicit schema version, tested rollback/backup
 procedure, and a deliberate operator-controlled migration.

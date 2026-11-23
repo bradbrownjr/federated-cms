@@ -36,8 +36,10 @@ The separate binary-clean lab listener can be started with:
 python -m federated_cms.b2f --port 63191 --lab-account KC1JMH --password-file lab-password.txt --database fcms-b2f-lab.sqlite3
 ```
 
-It binds only to localhost and exchanges synthetic B2 messages with a separate
-SQLite lab mailbox. Create `lab-password.txt` manually with a disposable test
+It binds only to localhost and exchanges synthetic B2 messages through the
+same SQLite lab mailbox service exposed by `CMSCore.lab_mailbox()`. This
+service is separate from the ordinary text mailbox and production accounts.
+Create `lab-password.txt` manually with a disposable test
 password, restrict file permissions to the local test account, and configure the
 same test password in the client. The server issues a B2F `;PQ:` challenge and
 checks the client's `;PR:` response against that single configured lab account.
@@ -47,8 +49,10 @@ The challenge uses MD5 and an eight-digit response, is vulnerable to offline
 password guessing and challenge collisions, has no rate limiting, and does not
 encrypt traffic or authenticate the server. It is for interoperability research,
 not production authentication. Do not use actual private mail, RF, or shared-host access.
-There is no SMTP, forwarding, resume, or production mailbox integration. The
-lab mailbox is deliberately separate from the ordinary CMS mailbox.
+There is no SMTP, forwarding, resume, or production mailbox integration.
+The service allows one active lab session per account; its 120-second lease
+expires after inactivity or an interrupted process. A stale session cannot
+acknowledge messages after another session takes over.
 
 To test with a local kissterm checkout (no network required):
 
@@ -56,8 +60,21 @@ To test with a local kissterm checkout (no network required):
 FCMS_KISSTERM_PATH=../kissterm PYTHONPATH=src python -m unittest tests.test_b2f -v
 ```
 
-The lab store's `b2f_lab_store(account, mid, raw, 'out')` method seeds a
-synthetic outbound B2 message; `'in'` holds messages received from the client.
+For controlled tests, `CMSCore(store).lab_mailbox()` returns a service whose
+trusted in-process `open_session(account)` context supports
+`store_message(session, mid, raw, 'out')` for seeding synthetic outbound B2
+bytes and `get(session, mid, 'in')` for received bytes; always call
+`close_session(session)` afterward. Close a seeding session before connecting
+the B2F client. `open_session` itself does not authenticate the caller: the
+adapter checks its configured test account and challenge before invoking it.
+It is not an authorization boundary against other local code or disk access.
+The lease is renewed only during mailbox operations, not while bytes are
+transferring. A transfer lasting more than 120 seconds can lose its lease and
+remain pending for retry. This loopback test mechanism is not ready for RF use.
+
+Older `b2f_lab_messages` rows remain in their original table but are not
+automatically imported into the new shared lab mailbox. The old lab database
+is retained unchanged; use a fresh database for this experiment.
 An offline synthetic bidirectional exchange also passes with Pat commit
 `2ad31e8fc1f1748ac1b00cac9d88da54e3e0efe2`, using a test-only localhost shim
 for Pat's Telnet callsign/password prompts. The B2F lab endpoint itself does

@@ -77,6 +77,11 @@ class CMSCore:
     def local_mailbox(self, mailbox: str) -> list[dict[str, str]]:
         return self.store.mailbox_messages(mailbox)
 
+    def lab_mailbox(self):
+        """Shared synthetic B2 mailbox; never an authorization boundary."""
+        from .lab_mailbox import LabMailboxService
+        return LabMailboxService(self.store)
+
     def request(self, request_id: str, owner_scope: str) -> RequestView | None:
         return self.store.get_request(request_id, owner_scope)
 
