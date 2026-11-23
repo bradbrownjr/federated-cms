@@ -72,6 +72,12 @@ The lease is renewed only during mailbox operations, not while bytes are
 transferring. A transfer lasting more than 120 seconds can lose its lease and
 remain pending for retry. This loopback test mechanism is not ready for RF use.
 
+`--database` accepts an operator-selected SQLite path; the separate lab tables
+do not enforce physical database or filesystem isolation. Use a dedicated
+test database and protect it from other local users. The lab service's `ack`
+checks the session and account, but does not issue a per-message claim token;
+the B2F adapter constrains acknowledgements to its own protocol sequence.
+
 Older `b2f_lab_messages` rows remain in their original table but are not
 automatically imported into the new shared lab mailbox. The old lab database
 is retained unchanged; use a fresh database for this experiment.

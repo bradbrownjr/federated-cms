@@ -85,7 +85,11 @@ or peer acceptance, not end-to-end delivery.
 
 The existing `messages` table stores text rather than raw B2 and attachments;
 the shared lab mailbox has no production grants or authenticated delivery claims.
-Neither is a production mailbox API. A migration must preserve byte-exact B2 data and avoid
+Its account session is a concurrency lease, and an in-process caller can
+acknowledge any pending MID in that account without a per-message claim. Its
+SQLite path is configurable, so separation into lab tables is not physical
+isolation from other data placed in the same file.
+Neither mailbox API is production-ready. A migration must preserve byte-exact B2 data and avoid
 promoting lab fixtures into private user mailboxes or treating an old callsign
 as verified identity. Use an explicit schema version, tested rollback/backup
 procedure, and a deliberate operator-controlled migration.
