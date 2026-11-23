@@ -33,14 +33,29 @@ through this terminal before a separate authentication/delegation design exists.
 The separate binary-clean lab listener can be started with:
 
 ```text
-python -m federated_cms.b2f --port 63191
+python -m federated_cms.b2f --port 63191 --lab-account KC1JMH --database fcms-b2f-lab.sqlite3
 ```
 
-It binds only to localhost. It supports an empty B2F session and defers every
-message proposal. It has no authentication, challenge, mailbox integration,
-compression, or message transfer; do not use it for actual mail or RF. An
-empty session was tested against the local kissterm client. The B2F mailbox
-roundtrip and independent Pat validation remain open M0.5 work.
+It binds only to localhost and exchanges synthetic B2 messages with a separate
+SQLite lab mailbox. The supplied callsign is a routing label, not authentication:
+any local process can impersonate it. There is no challenge or account security.
+Do not use actual private mail, production credentials, RF, or shared-host access.
+There is no SMTP, forwarding, resume, or production mailbox integration. The
+lab mailbox is deliberately separate from the ordinary CMS mailbox.
+
+To test with a local kissterm checkout (no network required):
+
+```text
+FCMS_KISSTERM_PATH=../kissterm PYTHONPATH=src python -m unittest tests.test_b2f -v
+```
+
+The lab store's `b2f_lab_store(account, mid, raw, 'out')` method seeds a
+synthetic outbound B2 message; `'in'` holds messages received from the client.
+Independent Pat validation and secure mailbox authorization remain open.
+
+The LZHUF codec is copied from kissterm commit `f3310c71efa8e3e23263ed25745a9c365a9efc74`
+(Copyright 2026 Brad Brown Jr, MIT license; see the repository LICENSE), with
+its own source and algorithm attribution in `lzhuf.py`.
 
 For Linux inetd mode, use the same database path visible to the inetd account:
 

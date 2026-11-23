@@ -6,8 +6,8 @@
 
 The repository now includes a local SQLite-backed CMS core and an ASCII-only BPQ
 terminal bridge for the first M1 increment. It is intentionally not federation
-or a complete B2F server. A separate loopback-only B2F handshake experiment
-currently defers all messages. See [development setup and BPQ examples](docs/DEVELOPMENT.md).
+or a production B2F server. A separate loopback-only B2F laboratory exchanges
+synthetic messages with an isolated test mailbox. See [development setup and BPQ examples](docs/DEVELOPMENT.md).
 
 Federated CMS investigates a decentralized, self-hostable messaging and information network for amateur radio. Nodes remain useful when isolated, discover peers without a mandatory central coordinator, forward durable requests and messages when links return, and route client information requests to reachable providers or Internet egress gateways.
 

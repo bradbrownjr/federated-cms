@@ -1,18 +1,24 @@
-"""Isolated B2F handshake and proposal-deferral research endpoint.
+"""Loopback-only, unauthenticated B2F interoperability laboratory.
 
-No mailbox access or message transfer is implemented yet. Every incoming
-proposal is deferred; this endpoint must not be used as a production server.
+This is an isolated test mailbox, not an authenticated mail server. Never use
+real mail or credentials. B2F and the ordinary BPQ terminal remain separate.
 """
-
 from __future__ import annotations
 
 import argparse
 import ipaddress
+import re
 import socket
 import socketserver
+import struct
+
+from . import lzhuf
+from .store import SQLiteStore, StoreUnavailable
 
 MAX_LINE = 512
-MAX_PROPOSALS = 5
+MAX_MESSAGE = 65536
+MAX_COMPRESSED = 131072
+MID = re.compile(r"^[A-Z0-9]{1,32}$")
 
 
 class ProtocolError(ValueError):
@@ -23,20 +29,34 @@ def proposal_checksum(lines: list[bytes]) -> int:
     return -sum(sum(line) + 13 for line in lines) & 255
 
 
+def message_mid(raw: bytes) -> str:
+    if len(raw) > MAX_MESSAGE or b"\r\n\r\n" not in raw:
+        raise ProtocolError("invalid B2 message")
+    headers = raw.split(b"\r\n\r\n", 1)[0].split(b"\r\n")
+    mids = [line[4:].strip().decode("ascii", "strict") for line in headers if line.lower().startswith(b"mid:")]
+    if len(mids) != 1 or not MID.fullmatch(mids[0]):
+        raise ProtocolError("invalid B2 MID")
+    return mids[0]
+
+
 class Session:
-    def __init__(self, connection: socket.socket):
-        self.connection = connection
+    def __init__(self, connection: socket.socket, store: SQLiteStore, account: str):
+        self.connection, self.store, self.account = connection, store, account
         self.reader = connection.makefile("rb")
 
     def send(self, line: str) -> None:
         self.connection.sendall(line.encode("ascii") + b"\r")
 
+    def read_exact(self, count: int) -> bytes:
+        data = self.reader.read(count)
+        if len(data) != count:
+            raise EOFError
+        return data
+
     def read_line(self) -> bytes:
         data = bytearray()
         while len(data) <= MAX_LINE:
-            byte = self.reader.read(1)
-            if not byte:
-                raise EOFError
+            byte = self.read_exact(1)
             if byte == b"\r":
                 if data:
                     return bytes(data)
@@ -48,44 +68,130 @@ class Session:
             data.extend(byte)
         raise ProtocolError("line too long")
 
+    def read_message(self, mid: str, size: int, compressed_size: int) -> bytes:
+        if self.read_exact(1) != b"\x01":
+            raise ProtocolError("missing message header")
+        length = self.read_exact(1)[0]
+        header = self.read_exact(length)
+        parts = header.split(b"\0")
+        if len(parts) != 3 or parts[1] != b"0" or parts[2]:
+            raise ProtocolError("unsupported message offset")
+        data = bytearray()
+        while True:
+            kind = self.read_exact(1)[0]
+            if kind == 4:
+                if (sum(data) + self.read_exact(1)[0]) & 255:
+                    raise ProtocolError("message checksum error")
+                break
+            if kind != 2:
+                raise ProtocolError("invalid message block")
+            length = self.read_exact(1)[0] or 256
+            if len(data) + length > compressed_size:
+                raise ProtocolError("compressed message too large")
+            data.extend(self.read_exact(length))
+        if len(data) != compressed_size or len(data) < 6 or struct.unpack_from('<I', data, 2)[0] != size:
+            raise ProtocolError("message length mismatch")
+        raw = lzhuf.decompress(bytes(data))
+        if len(raw) != size or message_mid(raw) != mid:
+            raise ProtocolError("message MID mismatch")
+        return raw
+
+    def write_message(self, compressed: bytes) -> None:
+        self.connection.sendall(b"\x01\x06Lab\x000\x00")
+        for pos in range(0, len(compressed), 125):
+            chunk = compressed[pos:pos + 125]
+            self.connection.sendall(bytes((2, len(chunk))) + chunk)
+        self.connection.sendall(bytes((4, -sum(compressed) & 255)))
+
+    def receive_turn(self, first: bytes) -> bool:
+        if first == b"FQ":
+            return False
+        if first == b"FF":
+            return True
+        proposals = []
+        lines = []
+        seen = set()
+        line = first
+        while line.startswith((b"FA ", b"FB ", b"FC ", b"FD ")):
+            lines.append(line)
+            if len(lines) > 5:
+                raise ProtocolError("too many proposals")
+            parts = line.decode("ascii").split()
+            if len(parts) != 6:
+                raise ProtocolError("bad proposal")
+            try:
+                mid, size, compressed = parts[2], int(parts[3]), int(parts[4])
+            except ValueError as exc:
+                raise ProtocolError("bad proposal") from exc
+            if not MID.fullmatch(mid) or not 0 <= size <= MAX_MESSAGE or not 6 <= compressed <= MAX_COMPRESSED:
+                raise ProtocolError("proposal bounds")
+            answer = "=" if parts[0] != "FC" or parts[1] not in {"EM", "CM"} else "+"
+            if mid in seen:
+                answer = "="
+            elif self.store.b2f_lab_get(self.account, mid, "in") is not None:
+                answer = "-"
+            seen.add(mid)
+            proposals.append((mid, size, compressed, answer))
+            line = self.read_line()
+        if not line.startswith(b"F> ") or int(line[3:], 16) != proposal_checksum(lines):
+            raise ProtocolError("proposal checksum")
+        self.send("FS " + "".join(item[3] for item in proposals))
+        for mid, size, compressed, answer in proposals:
+            if answer == "+":
+                raw = self.read_message(mid, size, compressed)
+                self.store.b2f_lab_store(self.account, mid, raw, "in")
+        return True
+
     def run(self) -> None:
         try:
             self.send("[FCMS-0.1-B2FHM$]")
             self.send("FCMS LAB >")
             sid = False
-            proposals: list[bytes] = []
+            caller = None
             while True:
                 line = self.read_line()
-                if line.startswith(b"[") and line.endswith(b"]"):
+                if line.startswith(b";FW:"):
+                    caller = line[4:].strip().decode("ascii").upper()
+                elif line.startswith(b"[") and line.endswith(b"]"):
                     sid = b"B2" in line.upper()
                 elif line.startswith(b";"):
                     continue
-                elif not sid:
-                    raise ProtocolError("B2 SID required")
-                elif line == b"FQ":
-                    return
-                elif line == b"FF":
-                    self.send("FQ")
-                    return
-                elif line.startswith((b"FA ", b"FB ", b"FC ", b"FD ")):
-                    proposals.append(line)
-                    if len(proposals) > MAX_PROPOSALS:
-                        raise ProtocolError("too many proposals")
-                elif line.startswith(b"F> "):
-                    try:
-                        supplied = int(line[3:], 16)
-                    except ValueError as exc:
-                        raise ProtocolError("invalid checksum") from exc
-                    if not proposals or supplied != proposal_checksum(proposals):
-                        raise ProtocolError("proposal checksum error")
-                    self.send("FS " + "=" * len(proposals))
-                    proposals.clear()
-                    self.send("FF")
                 else:
-                    raise ProtocolError("unexpected command")
+                    if not sid or caller != self.account:
+                        raise ProtocolError("lab account mismatch")
+                    break
+            while self.receive_turn(line):
+                messages = self.store.b2f_lab_outbox(self.account)
+                if messages:
+                    encoded = [(mid, raw, lzhuf.compress(raw)) for mid, raw in messages]
+                    lines = [f"FC EM {mid} {len(raw)} {len(data)} 0".encode() for mid, raw, data in encoded]
+                    for proposal in lines:
+                        self.send(proposal.decode())
+                    self.send(f"F> {proposal_checksum(lines):02X}")
+                    answer = self.read_line()
+                    if not answer.startswith(b"FS ") or len(answer[3:]) != len(encoded):
+                        raise ProtocolError("bad response")
+                    accepted = []
+                    for (mid, _, data), choice in zip(encoded, answer[3:]):
+                        if choice in b"+Yy":
+                            self.write_message(data)
+                            accepted.append(mid)
+                        elif choice in b"-NnRr":
+                            self.store.b2f_lab_delivered(self.account, mid)
+                        elif choice not in b"=LlHh":
+                            raise ProtocolError("unsupported response")
+                    line = self.read_line()
+                    for mid in accepted:
+                        self.store.b2f_lab_delivered(self.account, mid)
+                else:
+                    self.send("FF")
+                    line = self.read_line()
+                if line == b"FQ":
+                    return
+            self.send("FQ")
         except (EOFError, ConnectionError, TimeoutError):
             pass
-        except ProtocolError:
+        except (ProtocolError, lzhuf.LzhufError, StoreUnavailable, ValueError):
             try:
                 self.send("*** Protocol error")
             except OSError:
@@ -97,24 +203,29 @@ class Session:
 class _Handler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         self.request.settimeout(30)
-        Session(self.request).run()
+        Session(self.request, self.server.store, self.server.account).run()
 
 
 class LabServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int]):
+    def __init__(self, address: tuple[str, int], store: SQLiteStore, account: str):
         if not ipaddress.ip_address(address[0]).is_loopback:
             raise ValueError("B2F lab endpoint requires a loopback address")
+        self.store, self.account = store, account.upper()
         super().__init__(address, _Handler)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Experimental loopback-only B2F handshake endpoint")
+    parser = argparse.ArgumentParser(description="Unauthenticated loopback-only B2F laboratory")
     parser.add_argument("--port", type=int, default=63191)
+    parser.add_argument("--database", default="fcms-b2f-lab.sqlite3")
+    parser.add_argument("--lab-account", required=True, help="test callsign; NOT authentication")
     args = parser.parse_args()
-    with LabServer(("127.0.0.1", args.port)) as server:
+    store = SQLiteStore(args.database)
+    store.initialize()
+    with LabServer(("127.0.0.1", args.port), store, args.lab_account) as server:
         try:
             server.serve_forever()
         except KeyboardInterrupt:
