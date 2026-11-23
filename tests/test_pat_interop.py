@@ -70,13 +70,19 @@ class PatInteropTests(unittest.TestCase):
                                           "secure_login_password": "fixture-only", "locator": "FN43"}), encoding="utf-8")
             options = [binary, "--config", str(config), "--mbox", str(root / "mail"),
                        "--log", str(root / "pat.log"), "--event-log", str(root / "events.json")]
-            composed = subprocess.run(options + ["compose", "--subject", "Lab upload", "LAB"],
+            uploaded_attachment = bytes(range(256)) * 3 + b"\x00\xff\r\n"
+            upload_path = root / "upload.bin"
+            upload_path.write_bytes(uploaded_attachment)
+            composed = subprocess.run(options + ["compose", "--subject", "Lab upload", "--attachment", str(upload_path), "LAB"],
                                       input="Synthetic upload\n", text=True, capture_output=True, env=env, timeout=15)
             self.assertEqual(composed.returncode, 0, composed.stdout + composed.stderr)
             store = SQLiteStore(root / "lab.sqlite")
             store.initialize()
+            downloaded_attachment = bytes(reversed(range(256))) * 3 + b"\r\n\x00\xff"
             raw = (b"Mid: LABTEST12345\r\nBody: 18\r\nDate: 2026/01/01 00:00\r\n"
-                   b"From: LAB\r\nSubject: Lab download\r\nTo: N0CALL\r\nType: Private\r\n\r\nSynthetic download")
+                   + f"File: {len(downloaded_attachment)} download.bin\r\n".encode()
+                   + b"From: LAB\r\nSubject: Lab download\r\nTo: N0CALL\r\nType: Private\r\n\r\n"
+                   + b"Synthetic download\r\n" + downloaded_attachment + b"\r\n")
             store.b2f_lab_store("N0CALL", "LABTEST12345", raw, "out")
             with _Server(("127.0.0.1", 0), _PatShim) as server:
                 server.store = store
@@ -94,5 +100,7 @@ class PatInteropTests(unittest.TestCase):
                 rows = con.execute("SELECT raw FROM b2f_lab_messages WHERE account='N0CALL' AND direction='in'").fetchall()
             self.assertEqual(len(rows), 1, result.stdout + result.stderr)
             self.assertIn(b"Synthetic upload", rows[0]["raw"])
+            self.assertIn(uploaded_attachment, rows[0]["raw"])
             files = list((root / "mail" / "N0CALL").rglob("*"))
             self.assertTrue(any(p.is_file() and b"Synthetic download" in p.read_bytes() for p in files))
+            self.assertTrue(any(p.is_file() and downloaded_attachment in p.read_bytes() for p in files))

@@ -39,7 +39,7 @@ jobs:
       - name: Test real kissterm client offline
         env:
           FCMS_KISSTERM_PATH: ${{ github.workspace }}/reference-kissterm
-        run: python -m unittest tests.test_b2f.B2FLabTests.test_kissterm_bidirectional_roundtrip -v
+        run: python -m unittest tests.test_b2f.B2FLabTests.test_kissterm_bidirectional_roundtrip tests.test_b2f_recovery -v
 
   pat-interop:
     runs-on: ubuntu-latest
