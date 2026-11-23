@@ -15,13 +15,13 @@ import socketserver
 import struct
 
 from . import lzhuf
+from .b2_message import B2MessageError, MAX_MESSAGE, MID, message_mid as validate_message
 from .b2f_auth import login_response
+from .lab_mailbox import LabMailboxService, LabMailboxBusy, LabSessionExpired
 from .store import SQLiteStore, StoreUnavailable
 
 MAX_LINE = 512
-MAX_MESSAGE = 65536
 MAX_COMPRESSED = 131072
-MID = re.compile(r"^[A-Z0-9]{1,32}$")
 
 
 class ProtocolError(ValueError):
@@ -33,49 +33,17 @@ def proposal_checksum(lines: list[bytes]) -> int:
 
 
 def message_mid(raw: bytes) -> str:
-    if len(raw) > MAX_MESSAGE or b"\r\n\r\n" not in raw:
-        raise ProtocolError("invalid B2 message")
-    header_block, content = raw.split(b"\r\n\r\n", 1)
-    headers: list[tuple[bytes, bytes]] = []
-    for line in header_block.split(b"\r\n"):
-        if line.startswith((b" ", b"\t")) and headers:
-            name, value = headers[-1]
-            headers[-1] = (name, value + b" " + line.strip())
-            continue
-        name, separator, value = line.partition(b":")
-        if not separator or not re.fullmatch(rb"[A-Za-z0-9-]+", name):
-            raise ProtocolError("invalid B2 header")
-        headers.append((name.lower(), value.strip()))
-    mids = [value.decode("ascii", "strict") for name, value in headers if name == b"mid"]
-    if len(mids) != 1 or not MID.fullmatch(mids[0]):
-        raise ProtocolError("invalid B2 MID")
-    bodies = [value for name, value in headers if name == b"body"]
-    if len(bodies) != 1 or not re.fullmatch(rb"[0-9]{1,6}", bodies[0]):
-        raise ProtocolError("invalid B2 body length")
-    lengths = [int(bodies[0])]
-    for name, value in headers:
-        if name == b"file":
-            size, separator, filename = value.partition(b" ")
-            if not separator or not filename.strip() or not re.fullmatch(rb"[0-9]{1,6}", size):
-                raise ProtocolError("invalid B2 file header")
-            lengths.append(int(size))
-    pos = 0
-    for index, length in enumerate(lengths):
-        if length > MAX_MESSAGE or pos + length > len(content):
-            raise ProtocolError("truncated B2 section")
-        pos += length
-        if index + 1 < len(lengths):
-            if content[pos:pos + 2] != b"\r\n":
-                raise ProtocolError("missing B2 section separator")
-            pos += 2
-    if content[pos:] not in (b"", b"\r\n"):
-        raise ProtocolError("unexpected B2 trailing data")
-    return mids[0]
+    try:
+        return validate_message(raw)
+    except B2MessageError as exc:
+        raise ProtocolError("invalid B2 message") from exc
 
 
 class Session:
     def __init__(self, connection: socket.socket, store: SQLiteStore, account: str, password: str):
         self.connection, self.store, self.account, self.password = connection, store, account, password
+        self.mailbox = LabMailboxService(store)
+        self.mailbox_session = None
         self.reader = connection.makefile("rb")
 
     def send(self, line: str) -> None:
@@ -162,7 +130,7 @@ class Session:
             answer = "=" if parts[0] != "FC" or parts[1] not in {"EM", "CM"} else "+"
             if mid in seen:
                 answer = "="
-            elif self.store.b2f_lab_get(self.account, mid, "in") is not None:
+            elif self.mailbox.get(self.mailbox_session, mid, "in") is not None:
                 answer = "-"
             seen.add(mid)
             proposals.append((mid, size, compressed, answer))
@@ -175,7 +143,7 @@ class Session:
         for mid, size, compressed, answer in proposals:
             if answer == "+":
                 raw = self.read_message(mid, size, compressed)
-                self.store.b2f_lab_store(self.account, mid, raw, "in")
+                self.mailbox.store_message(self.mailbox_session, mid, raw, "in")
         return True
 
     def run(self) -> None:
@@ -210,19 +178,21 @@ class Session:
                     if (not sid or caller != self.account or response is None
                             or not hmac.compare_digest(response, expected)):
                         raise ProtocolError("lab account mismatch")
+                    self.mailbox_session = self.mailbox.open_session(self.account)
                     break
             pending_delivery: list[str] = []
+            deferred: set[str] = set()
             while True:
                 continuing = self.receive_turn(line)
                 # Only a complete, valid next turn acknowledges a transmitted
                 # message. EOF, malformed lines and invalid proposal blocks
                 # leave it pending so a later session can retry it.
                 for mid in pending_delivery:
-                    self.store.b2f_lab_delivered(self.account, mid)
+                    self.mailbox.ack(self.mailbox_session, mid)
                 pending_delivery = []
                 if not continuing:
                     return
-                messages = self.store.b2f_lab_outbox(self.account)
+                messages = self.mailbox.pending(self.mailbox_session, exclude=deferred)
                 if messages:
                     encoded = [(mid, raw, lzhuf.compress(raw)) for mid, raw in messages]
                     lines = [f"FC EM {mid} {len(raw)} {len(data)} 0".encode() for mid, raw, data in encoded]
@@ -240,7 +210,11 @@ class Session:
                             self.write_message(data)
                             accepted.append(mid)
                         elif choice in b"-NnRr":
-                            self.store.b2f_lab_delivered(self.account, mid)
+                            self.mailbox.ack(self.mailbox_session, mid)
+                        else:
+                            deferred.add(mid)
+                            if len(deferred) > 1000:
+                                raise ProtocolError("too many deferred messages")
                     line = self.read_line()
                     pending_delivery = accepted
                 else:
@@ -248,13 +222,17 @@ class Session:
                     line = self.read_line()
         except (EOFError, ConnectionError, TimeoutError):
             pass
-        except (ProtocolError, lzhuf.LzhufError, StoreUnavailable, ValueError):
+        except (ProtocolError, lzhuf.LzhufError, StoreUnavailable, LabMailboxBusy, LabSessionExpired, ValueError):
             try:
                 self.send("*** Protocol error")
             except OSError:
                 pass
         finally:
-            self.reader.close()
+            try:
+                if self.mailbox_session is not None:
+                    self.mailbox.close_session(self.mailbox_session)
+            finally:
+                self.reader.close()
 
 
 class _Handler(socketserver.BaseRequestHandler):

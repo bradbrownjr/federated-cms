@@ -15,10 +15,17 @@ import unittest
 
 from federated_cms.b2f import Session
 from federated_cms.store import SQLiteStore
+from tests.lab_mailbox_helpers import mailbox_call
 
 
 class _PatShim(socketserver.BaseRequestHandler):
     def handle(self):
+        try:
+            self.handle_session()
+        finally:
+            self.server.session_done.set()
+
+    def handle_session(self):
         self.request.settimeout(10)
         # One-byte reads avoid consuming any subsequent B2F bytes.
         def read_line():
@@ -43,6 +50,10 @@ class _PatShim(socketserver.BaseRequestHandler):
 class _Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    def __init__(self, *args, **kwargs):
+        self.session_done = threading.Event()
+        super().__init__(*args, **kwargs)
 
 
 @unittest.skipUnless(os.environ.get("FCMS_PAT_BINARY"), "set FCMS_PAT_BINARY to run Pat integration")
@@ -83,7 +94,7 @@ class PatInteropTests(unittest.TestCase):
                    + f"File: {len(downloaded_attachment)} download.bin\r\n".encode()
                    + b"From: LAB\r\nSubject: Lab download\r\nTo: N0CALL\r\nType: Private\r\n\r\n"
                    + b"Synthetic download\r\n" + downloaded_attachment + b"\r\n")
-            store.b2f_lab_store("N0CALL", "LABTEST12345", raw, "out")
+            mailbox_call(store, "N0CALL", "store_message", "LABTEST12345", raw, "out")
             with _Server(("127.0.0.1", 0), _PatShim) as server:
                 server.store = store
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -91,16 +102,16 @@ class PatInteropTests(unittest.TestCase):
                 try:
                     url = f"telnet://N0CALL:lab-only@127.0.0.1:{server.server_address[1]}/WL2K"
                     result = subprocess.run(options + ["connect", url], text=True, capture_output=True, env=env, timeout=30)
+                    self.assertTrue(server.session_done.wait(3), "Pat session did not finish")
                 finally:
                     server.shutdown()
                     thread.join()
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(store.b2f_lab_outbox("N0CALL"), [])
-            with store._connect() as con:
-                rows = con.execute("SELECT raw FROM b2f_lab_messages WHERE account='N0CALL' AND direction='in'").fetchall()
+            self.assertEqual(mailbox_call(store, "N0CALL", "pending"), [])
+            rows = mailbox_call(store, "N0CALL", "list_incoming")
             self.assertEqual(len(rows), 1, result.stdout + result.stderr)
-            self.assertIn(b"Synthetic upload", rows[0]["raw"])
-            self.assertIn(uploaded_attachment, rows[0]["raw"])
+            self.assertIn(b"Synthetic upload", rows[0][1])
+            self.assertIn(uploaded_attachment, rows[0][1])
             files = list((root / "mail" / "N0CALL").rglob("*"))
             self.assertTrue(any(p.is_file() and b"Synthetic download" in p.read_bytes() for p in files))
             self.assertTrue(any(p.is_file() and downloaded_attachment in p.read_bytes() for p in files))

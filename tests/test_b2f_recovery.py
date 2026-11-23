@@ -9,6 +9,7 @@ import unittest
 
 from federated_cms.b2f import LabServer, _Handler
 from federated_cms.store import SQLiteStore
+from tests.lab_mailbox_helpers import mailbox_call
 
 
 @unittest.skipUnless(os.environ.get("FCMS_KISSTERM_PATH"), "set FCMS_KISSTERM_PATH for kissterm tests")
@@ -56,6 +57,8 @@ class KisstermRecoveryTests(unittest.TestCase):
                 output = client.take_output()
                 if output:
                     conn.sendall(output)
+            while conn.recv(4096):
+                pass  # EOF follows the server's mailbox-session release.
         self.assertEqual(client.error, "")
         return client.take_events()
 
@@ -66,7 +69,7 @@ class KisstermRecoveryTests(unittest.TestCase):
                                       body="Upload", files=[("upload.bin", incoming_file)])
         outgoing = self.message.build(sender="LAB", to=[self.ACCOUNT], subject="Attachment down",
                                       body="Download", files=[("download.bin", outgoing_file)])
-        self.store.b2f_lab_store(self.ACCOUNT, outgoing.mid, self.message.serialize(outgoing), "out")
+        mailbox_call(self.store, self.ACCOUNT, "store_message", outgoing.mid, self.message.serialize(outgoing), "out")
         server = self.start_server()
 
         events = self.exchange(server, outbound=[incoming])
@@ -75,15 +78,15 @@ class KisstermRecoveryTests(unittest.TestCase):
         self.assertEqual([(event.mid, event.already_had) for event in sent], [(incoming.mid, False)])
         self.assertEqual(len(received), 1)
         self.assertEqual(received[0].message.files, [("download.bin", outgoing_file)])
-        persisted = SQLiteStore(self.db_path).b2f_lab_get(self.ACCOUNT, incoming.mid, "in")
+        persisted = mailbox_call(SQLiteStore(self.db_path), self.ACCOUNT, "get", incoming.mid, "in")
         self.assertEqual(persisted, self.message.serialize(incoming))
         self.assertEqual(self.message.parse(persisted).files, [("upload.bin", incoming_file)])
-        self.assertEqual(self.store.b2f_lab_outbox(self.ACCOUNT), [])
+        self.assertEqual(mailbox_call(self.store, self.ACCOUNT, "pending"), [])
 
         events = self.exchange(server, outbound=[incoming])
         sent = [event for event in events if isinstance(event, self.b2f.Sent)]
         self.assertEqual([(event.mid, event.already_had) for event in sent], [(incoming.mid, True)])
-        self.assertEqual(self.store.b2f_lab_get(self.ACCOUNT, incoming.mid, "in"), persisted)
+        self.assertEqual(mailbox_call(self.store, self.ACCOUNT, "get", incoming.mid, "in"), persisted)
 
     def test_interrupted_upload_is_retried_after_restart(self):
         payload = bytes(range(256)) * 8
@@ -120,12 +123,12 @@ class KisstermRecoveryTests(unittest.TestCase):
         self.assertTrue(worker_done.wait(3), "server did not finish the interrupted session")
         server.shutdown()
         server.server_close()
-        self.assertIsNone(SQLiteStore(self.db_path).b2f_lab_get(self.ACCOUNT, message.mid, "in"))
+        self.assertIsNone(mailbox_call(SQLiteStore(self.db_path), self.ACCOUNT, "get", message.mid, "in"))
 
         restarted = self.start_server()
         events = self.exchange(restarted, outbound=[message])
         sent = [event for event in events if isinstance(event, self.b2f.Sent)]
         self.assertEqual([(event.mid, event.already_had) for event in sent], [(message.mid, False)])
-        recovered = SQLiteStore(self.db_path).b2f_lab_get(self.ACCOUNT, message.mid, "in")
+        recovered = mailbox_call(SQLiteStore(self.db_path), self.ACCOUNT, "get", message.mid, "in")
         self.assertEqual(recovered, self.message.serialize(message))
         self.assertEqual(self.message.parse(recovered).files, [("retry.bin", payload)])
