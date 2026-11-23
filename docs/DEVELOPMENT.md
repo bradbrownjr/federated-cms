@@ -28,6 +28,20 @@ Weather is public test data: its random request ID is a receipt capability, so
 `RESULT <id>` works after reconnecting. Private mailbox data is never exposed
 through this terminal before a separate authentication/delegation design exists.
 
+## Experimental B2F handshake
+
+The separate binary-clean lab listener can be started with:
+
+```text
+python -m federated_cms.b2f --port 63191
+```
+
+It binds only to localhost. It supports an empty B2F session and defers every
+message proposal. It has no authentication, challenge, mailbox integration,
+compression, or message transfer; do not use it for actual mail or RF. An
+empty session was tested against the local kissterm client. The B2F mailbox
+roundtrip and independent Pat validation remain open M0.5 work.
+
 For Linux inetd mode, use the same database path visible to the inetd account:
 
 ```text
