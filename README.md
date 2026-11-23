@@ -37,6 +37,8 @@ CMS is used here descriptively for **Common Message Server**; this project is in
 - [M0 technology comparison and benchmark plan](docs/TECHNOLOGY-MATRIX.md)
 - [Request envelope v0.1 (draft)](docs/REQUEST-ENVELOPE-v0.1.md) ([JSON Schema](schema/envelope-v0.1.schema.json))
 - [M0 RF/IP threat model and airtime baseline](docs/THREAT-MODEL-M0.md)
+- [Linux RMS Gateway source findings](docs/RMS-GATEWAY-FINDINGS.md)
+- [Mailbox identity and authorization proposal](docs/MAILBOX-AUTHORIZATION-DESIGN.md)
 - [Technology research](docs/RESEARCH.md)
 - [Architecture decisions](docs/DECISIONS.md)
 

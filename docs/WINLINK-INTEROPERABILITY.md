@@ -31,6 +31,7 @@ Can an existing Winlink-compatible client exchange B2F messages with an independ
 - Record exact behaviors and discrepancies; do not infer compatibility with other clients.
 
 ### W2: Gateway-to-CMS investigation
+- Source inspection of one Linux gateway revision is recorded in [RMS gateway findings](RMS-GATEWAY-FINDINGS.md). It uses a distinct gateway login before relaying; a live offline gateway test remains open.
 - Inspect rmsgw and publicly available BPQ integration/configuration.
 - Map protocol, authentication, API/endpoint dependencies, routing, server selection and failure behavior.
 - Classify each dependency: documented/open, reproducible, configurable, closed, or unknown.
