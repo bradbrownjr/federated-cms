@@ -2,6 +2,7 @@ from datetime import timedelta
 from pathlib import Path
 import tempfile
 import unittest
+import sqlite3
 
 from federated_cms import CMSCore, SQLiteStore
 from federated_cms.core import utc_now, wire_time
@@ -65,6 +66,33 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(core.store.finish(receipt.request_id, new["processing_lease_token"], "completed", {"worker": "new"}, now))
         self.assertFalse(core.store.finish(receipt.request_id, old["processing_lease_token"], "completed", {"worker": "old"}, now))
         self.assertEqual(core.request(receipt.request_id, "scope-a").result, {"worker": "new"})
+
+    def test_completion_rejected_at_lease_and_request_deadlines(self):
+        for deadline in ("lease", "request"):
+            with self.subTest(deadline=deadline), tempfile.TemporaryDirectory() as directory:
+                core = make_core(Path(directory))
+                receipt = core.submit_weather("FN43", "scope-a")
+                now = wire_time(utc_now())
+                later = wire_time(utc_now() + timedelta(seconds=30))
+                claimed = core.store.claim_next(now, later)
+                if deadline == "request":
+                    with sqlite3.connect(core.store.path) as con:
+                        con.execute("UPDATE requests SET expires_at=? WHERE id=?", (now, receipt.request_id))
+                    finish_at = now
+                else:
+                    finish_at = later
+                self.assertFalse(core.store.finish(receipt.request_id, claimed["processing_lease_token"], "completed", {"ok": True}, finish_at))
+                self.assertIsNone(core.request(receipt.request_id, "scope-a").result)
+
+    def test_legacy_processing_rows_without_lease_are_recovered(self):
+        core = make_core(self.path)
+        receipt = core.submit_weather("FN43", "scope-a")
+        with sqlite3.connect(core.store.path) as con:
+            con.execute("UPDATE requests SET status='processing', processing_lease_until=NULL, processing_lease_token=NULL WHERE id=?", (receipt.request_id,))
+        now = wire_time(utc_now())
+        claimed = core.store.claim_next(now, wire_time(utc_now() + timedelta(seconds=30)))
+        self.assertEqual(claimed["id"], receipt.request_id)
+        self.assertIsNotNone(claimed["processing_lease_token"])
 
     def test_expiration_prevents_execution(self):
         core = make_core(self.path)

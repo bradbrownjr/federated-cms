@@ -124,7 +124,8 @@ class SQLiteStore:
                 con.execute("BEGIN IMMEDIATE")
                 con.execute("UPDATE requests SET status='expired', updated_at=? WHERE status IN ('queued','processing') AND expires_at <= ?", (now, now))
                 con.execute("""UPDATE requests SET status='queued', processing_lease_until=NULL, processing_lease_token=NULL, updated_at=?
-                               WHERE status='processing' AND expires_at > ? AND processing_lease_until <= ?""",
+                               WHERE status='processing' AND expires_at > ?
+                               AND (processing_lease_until IS NULL OR processing_lease_token IS NULL OR processing_lease_until <= ?)""",
                             (now, now, now))
                 row = con.execute("SELECT * FROM requests WHERE status='queued' AND expires_at > ? ORDER BY created_at LIMIT 1", (now,)).fetchone()
                 if row:
@@ -144,8 +145,9 @@ class SQLiteStore:
                 con.execute("BEGIN IMMEDIATE")
                 cursor = con.execute("""UPDATE requests SET status=?, result_json=?, processing_lease_until=NULL,
                                       processing_lease_token=NULL, updated_at=?
-                                      WHERE id=? AND status='processing' AND processing_lease_token=?""",
-                                     (status, json.dumps(result, sort_keys=True), now, request_id, lease_token))
+                                      WHERE id=? AND status='processing' AND processing_lease_token=?
+                                      AND processing_lease_until > ? AND expires_at > ?""",
+                                     (status, json.dumps(result, sort_keys=True), now, request_id, lease_token, now, now))
                 con.execute("COMMIT")
                 return cursor.rowcount == 1
         except sqlite3.Error as exc:
