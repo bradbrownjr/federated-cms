@@ -1,8 +1,8 @@
 # Development and BPQ bridge setup
 
 This is an M1 research prototype. It has a local SQLite store, a deterministic
-weather service, and an ASCII terminal adapter. It does not implement federation
-or B2F.
+weather service, an ASCII terminal adapter, and an experimental B2F lab. It
+does not implement federation.
 
 ## Linux and Windows development
 
@@ -27,6 +27,63 @@ synthetic and labeled `TEST DATA`. The database is retained across restarts.
 Weather is public test data: its random request ID is a receipt capability, so
 `RESULT <id>` works after reconnecting. Private mailbox data is never exposed
 through this terminal before a separate authentication/delegation design exists.
+
+## Experimental B2F handshake
+
+The separate binary-clean lab listener can be started with:
+
+```text
+python -m federated_cms.b2f --port 63191 --lab-account KC1JMH --password-file lab-password.txt --database fcms-b2f-lab.sqlite3
+```
+
+It binds only to localhost and exchanges synthetic B2 messages with a separate
+SQLite lab mailbox. Create `lab-password.txt` manually with a disposable test
+password, restrict file permissions to the local test account, and configure the
+same test password in the client. The server issues a B2F `;PQ:` challenge and
+checks the client's `;PR:` response against that single configured lab account.
+The file contains a recoverable plaintext password, which this legacy algorithm
+requires; do not use a real Winlink password or reuse any production secret.
+The challenge uses MD5 and an eight-digit response, is vulnerable to offline
+password guessing and challenge collisions, has no rate limiting, and does not
+encrypt traffic or authenticate the server. It is for interoperability research,
+not production authentication. Do not use actual private mail, RF, or shared-host access.
+There is no SMTP, forwarding, resume, or production mailbox integration. The
+lab mailbox is deliberately separate from the ordinary CMS mailbox.
+
+To test with a local kissterm checkout (no network required):
+
+```text
+FCMS_KISSTERM_PATH=../kissterm PYTHONPATH=src python -m unittest tests.test_b2f -v
+```
+
+The lab store's `b2f_lab_store(account, mid, raw, 'out')` method seeds a
+synthetic outbound B2 message; `'in'` holds messages received from the client.
+An offline synthetic bidirectional exchange also passes with Pat commit
+`2ad31e8fc1f1748ac1b00cac9d88da54e3e0efe2`, using a test-only localhost shim
+for Pat's Telnet callsign/password prompts. The B2F lab endpoint itself does
+not implement those Telnet prompts. Secure mailbox authorization remains open.
+On the wire, an already stored MID is rejected before its content is sent;
+the server therefore cannot detect a different body offered under that MID.
+The byte-for-byte collision check applies only when storing a body locally.
+CI exercises the roundtrip against kissterm commit
+`f3310c71efa8e3e23263ed25745a9c365a9efc74`.
+
+To run the Pat test with a separately built binary, set `FCMS_PAT_BINARY` to
+its absolute path and run `python -m unittest tests.test_pat_interop -v`. It
+creates a temporary configuration and mailbox, disables version reporting,
+pre-populates Pat's account-confirmation cache, blocks external HTTP via a
+local closed proxy, and uses only a loopback test connection. Use only the
+pinned Pat version: other versions may have different startup behavior.
+
+Winlink Express and compatible clients can answer a B2F secure-login challenge
+using their configured password; see Winlink's
+[data-flow document](https://winlink.org/sites/default/files/downloads/winlink_data_flow_and_data_packaging.pdf).
+The separate `lab-only` Telnet prompt password in the Pat test is a fixture and
+provides no mailbox authorization; B2F challenge verification is separate.
+
+The LZHUF codec is copied from kissterm commit `f3310c71efa8e3e23263ed25745a9c365a9efc74`
+(Copyright 2026 Brad Brown Jr, MIT license; see the repository LICENSE), with
+its own source and algorithm attribution in `lzhuf.py`.
 
 For Linux inetd mode, use the same database path visible to the inetd account:
 

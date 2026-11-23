@@ -65,6 +65,12 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS requests_owner_created ON requests(owner_scope, created_at DESC);
                 CREATE INDEX IF NOT EXISTS requests_status_expiry ON requests(status, expires_at);
+                CREATE TABLE IF NOT EXISTS b2f_lab_messages (
+                    account TEXT NOT NULL, mid TEXT NOT NULL, raw BLOB NOT NULL,
+                    direction TEXT NOT NULL CHECK(direction IN ('in','out')),
+                    delivered INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(account, mid, direction)
+                );
                 """)
                 columns = {row["name"] for row in con.execute("PRAGMA table_info(requests)")}
                 if "public" not in columns:
@@ -116,6 +122,46 @@ class SQLiteStore:
                 return [dict(row) for row in rows]
         except sqlite3.Error as exc:
             raise StoreUnavailable("database unavailable") from exc
+
+    def b2f_lab_store(self, account: str, mid: str, raw: bytes, direction: str) -> bool:
+        """Persist an immutable B2 lab message; reject a reused MID with different bytes."""
+        if direction not in {"in", "out"}:
+            raise ValueError("invalid direction")
+        try:
+            with self._connect() as con:
+                con.execute("BEGIN IMMEDIATE")
+                row = con.execute("SELECT raw FROM b2f_lab_messages WHERE account=? AND mid=? AND direction=?", (account, mid, direction)).fetchone()
+                if row and row["raw"] != raw:
+                    raise ValueError("B2 message ID collision")
+                if not row:
+                    con.execute("INSERT INTO b2f_lab_messages(account,mid,raw,direction) VALUES(?,?,?,?)", (account, mid, raw, direction))
+                con.execute("COMMIT")
+                return row is None
+        except sqlite3.Error as exc:
+            raise StoreUnavailable("B2 lab store unavailable") from exc
+
+    def b2f_lab_get(self, account: str, mid: str, direction: str) -> bytes | None:
+        try:
+            with self._connect() as con:
+                row = con.execute("SELECT raw FROM b2f_lab_messages WHERE account=? AND mid=? AND direction=?", (account, mid, direction)).fetchone()
+                return bytes(row["raw"]) if row else None
+        except sqlite3.Error as exc:
+            raise StoreUnavailable("B2 lab store unavailable") from exc
+
+    def b2f_lab_outbox(self, account: str) -> list[tuple[str, bytes]]:
+        try:
+            with self._connect() as con:
+                rows = con.execute("SELECT mid,raw FROM b2f_lab_messages WHERE account=? AND direction='out' AND delivered=0 ORDER BY rowid LIMIT 5", (account,)).fetchall()
+                return [(row["mid"], bytes(row["raw"])) for row in rows]
+        except sqlite3.Error as exc:
+            raise StoreUnavailable("B2 lab store unavailable") from exc
+
+    def b2f_lab_delivered(self, account: str, mid: str) -> None:
+        try:
+            with self._connect() as con:
+                con.execute("UPDATE b2f_lab_messages SET delivered=1 WHERE account=? AND mid=? AND direction='out'", (account, mid))
+        except sqlite3.Error as exc:
+            raise StoreUnavailable("B2 lab store unavailable") from exc
 
     def claim_next(self, now: str, lease_until: str) -> sqlite3.Row | None:
         """Atomically claim work and recover expired processing leases after a crash."""
