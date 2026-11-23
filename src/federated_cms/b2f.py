@@ -1,4 +1,4 @@
-"""Loopback-only, unauthenticated B2F interoperability laboratory.
+"""Loopback-only B2F interoperability laboratory with legacy lab login.
 
 This is an isolated test mailbox, not an authenticated mail server. Never use
 real mail or credentials. B2F and the ordinary BPQ terminal remain separate.
@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import hmac
 import re
+import secrets
 import socket
 import socketserver
 import struct
 
 from . import lzhuf
+from .b2f_auth import login_response
 from .store import SQLiteStore, StoreUnavailable
 
 MAX_LINE = 512
@@ -40,8 +43,8 @@ def message_mid(raw: bytes) -> str:
 
 
 class Session:
-    def __init__(self, connection: socket.socket, store: SQLiteStore, account: str):
-        self.connection, self.store, self.account = connection, store, account
+    def __init__(self, connection: socket.socket, store: SQLiteStore, account: str, password: str):
+        self.connection, self.store, self.account, self.password = connection, store, account, password
         self.reader = connection.makefile("rb")
 
     def send(self, line: str) -> None:
@@ -145,19 +148,34 @@ class Session:
     def run(self) -> None:
         try:
             self.send("[FCMS-0.1-B2FHM$]")
+            challenge = f"{secrets.randbelow(100_000_000):08d}"
+            self.send(f";PQ: {challenge}")
             self.send("FCMS LAB >")
             sid = False
             caller = None
+            response = None
+            handshake_lines = 0
             while True:
                 line = self.read_line()
+                handshake_lines += 1
+                if handshake_lines > 16:
+                    raise ProtocolError("handshake too long")
                 if line.startswith(b";FW:"):
+                    if caller is not None:
+                        raise ProtocolError("duplicate caller")
                     caller = line[4:].strip().decode("ascii").upper()
+                elif line.startswith(b";PR:"):
+                    if response is not None:
+                        raise ProtocolError("duplicate response")
+                    response = line[4:].strip().decode("ascii")
                 elif line.startswith(b"[") and line.endswith(b"]"):
                     sid = b"B2" in line.upper()
                 elif line.startswith(b";"):
                     continue
                 else:
-                    if not sid or caller != self.account:
+                    expected = login_response(challenge, self.password)
+                    if (not sid or caller != self.account or response is None
+                            or not hmac.compare_digest(response, expected)):
                         raise ProtocolError("lab account mismatch")
                     break
             pending_delivery: list[str] = []
@@ -209,29 +227,34 @@ class Session:
 class _Handler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         self.request.settimeout(30)
-        Session(self.request, self.server.store, self.server.account).run()
+        Session(self.request, self.server.store, self.server.account, self.server.password).run()
 
 
 class LabServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], store: SQLiteStore, account: str):
+    def __init__(self, address: tuple[str, int], store: SQLiteStore, account: str, password: str):
         if not ipaddress.ip_address(address[0]).is_loopback:
             raise ValueError("B2F lab endpoint requires a loopback address")
-        self.store, self.account = store, account.upper()
+        if not re.fullmatch(r"[A-Za-z0-9]{1,6}(?:-[0-9]{1,2})?", account) or not password or len(password.encode("utf-8")) > 128 or any(ord(c) < 32 for c in password):
+            raise ValueError("invalid lab account or password")
+        self.store, self.account, self.password = store, account.upper(), password
         super().__init__(address, _Handler)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Unauthenticated loopback-only B2F laboratory")
+    parser = argparse.ArgumentParser(description="Loopback-only B2F authentication laboratory")
     parser.add_argument("--port", type=int, default=63191)
     parser.add_argument("--database", default="fcms-b2f-lab.sqlite3")
-    parser.add_argument("--lab-account", required=True, help="test callsign; NOT authentication")
+    parser.add_argument("--lab-account", required=True, help="test callsign for the lab mailbox")
+    parser.add_argument("--password-file", required=True, help="UTF-8 file holding a disposable lab password")
     args = parser.parse_args()
+    with open(args.password_file, encoding="utf-8") as secret_file:
+        password = secret_file.read(130).rstrip("\r\n")
     store = SQLiteStore(args.database)
     store.initialize()
-    with LabServer(("127.0.0.1", args.port), store, args.lab_account) as server:
+    with LabServer(("127.0.0.1", args.port), store, args.lab_account, password) as server:
         try:
             server.serve_forever()
         except KeyboardInterrupt:

@@ -1,8 +1,8 @@
 # Development and BPQ bridge setup
 
 This is an M1 research prototype. It has a local SQLite store, a deterministic
-weather service, and an ASCII terminal adapter. It does not implement federation
-or B2F.
+weather service, an ASCII terminal adapter, and an experimental B2F lab. It
+does not implement federation.
 
 ## Linux and Windows development
 
@@ -33,13 +33,20 @@ through this terminal before a separate authentication/delegation design exists.
 The separate binary-clean lab listener can be started with:
 
 ```text
-python -m federated_cms.b2f --port 63191 --lab-account KC1JMH --database fcms-b2f-lab.sqlite3
+python -m federated_cms.b2f --port 63191 --lab-account KC1JMH --password-file lab-password.txt --database fcms-b2f-lab.sqlite3
 ```
 
 It binds only to localhost and exchanges synthetic B2 messages with a separate
-SQLite lab mailbox. The supplied callsign is a routing label, not authentication:
-any local process can impersonate it. There is no challenge or account security.
-Do not use actual private mail, production credentials, RF, or shared-host access.
+SQLite lab mailbox. Create `lab-password.txt` manually with a disposable test
+password, restrict file permissions to the local test account, and configure the
+same test password in the client. The server issues a B2F `;PQ:` challenge and
+checks the client's `;PR:` response against that single configured lab account.
+The file contains a recoverable plaintext password, which this legacy algorithm
+requires; do not use a real Winlink password or reuse any production secret.
+The challenge uses MD5 and an eight-digit response, is vulnerable to offline
+password guessing and challenge collisions, has no rate limiting, and does not
+encrypt traffic or authenticate the server. It is for interoperability research,
+not production authentication. Do not use actual private mail, RF, or shared-host access.
 There is no SMTP, forwarding, resume, or production mailbox integration. The
 lab mailbox is deliberately separate from the ordinary CMS mailbox.
 
@@ -71,8 +78,8 @@ pinned Pat version: other versions may have different startup behavior.
 Winlink Express and compatible clients can answer a B2F secure-login challenge
 using their configured password; see Winlink's
 [data-flow document](https://winlink.org/sites/default/files/downloads/winlink_data_flow_and_data_packaging.pdf).
-This lab does not issue or verify that challenge. The local `lab-only` Telnet
-password in the Pat test is a fixture and provides no mailbox authorization.
+The separate `lab-only` Telnet prompt password in the Pat test is a fixture and
+provides no mailbox authorization; B2F challenge verification is separate.
 
 The LZHUF codec is copied from kissterm commit `f3310c71efa8e3e23263ed25745a9c365a9efc74`
 (Copyright 2026 Brad Brown Jr, MIT license; see the repository LICENSE), with

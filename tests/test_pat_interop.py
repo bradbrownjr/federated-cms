@@ -37,7 +37,7 @@ class _PatShim(socketserver.BaseRequestHandler):
         self.request.sendall(b"Password:\r")
         password = read_line()
         if caller == b"N0CALL" and password == b"lab-only":
-            Session(self.request, self.server.store, "N0CALL").run()
+            Session(self.request, self.server.store, "N0CALL", "fixture-only").run()
 
 
 class _Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -67,7 +67,7 @@ class PatInteropTests(unittest.TestCase):
             cache.write_text(json.dumps(datetime.now(timezone.utc).isoformat()), encoding="utf-8")
             config = root / "config.json"
             config.write_text(json.dumps({"mycall": "N0CALL", "version_reporting_disabled": True,
-                                          "secure_login_password": "", "locator": "FN43"}), encoding="utf-8")
+                                          "secure_login_password": "fixture-only", "locator": "FN43"}), encoding="utf-8")
             options = [binary, "--config", str(config), "--mbox", str(root / "mail"),
                        "--log", str(root / "pat.log"), "--event-log", str(root / "events.json")]
             composed = subprocess.run(options + ["compose", "--subject", "Lab upload", "LAB"],
