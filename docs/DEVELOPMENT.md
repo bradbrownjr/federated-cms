@@ -51,12 +51,28 @@ FCMS_KISSTERM_PATH=../kissterm PYTHONPATH=src python -m unittest tests.test_b2f 
 
 The lab store's `b2f_lab_store(account, mid, raw, 'out')` method seeds a
 synthetic outbound B2 message; `'in'` holds messages received from the client.
-Independent Pat validation and secure mailbox authorization remain open.
+An offline synthetic bidirectional exchange also passes with Pat commit
+`2ad31e8fc1f1748ac1b00cac9d88da54e3e0efe2`, using a test-only localhost shim
+for Pat's Telnet callsign/password prompts. The B2F lab endpoint itself does
+not implement those Telnet prompts. Secure mailbox authorization remains open.
 On the wire, an already stored MID is rejected before its content is sent;
 the server therefore cannot detect a different body offered under that MID.
 The byte-for-byte collision check applies only when storing a body locally.
 CI exercises the roundtrip against kissterm commit
 `f3310c71efa8e3e23263ed25745a9c365a9efc74`.
+
+To run the Pat test with a separately built binary, set `FCMS_PAT_BINARY` to
+its absolute path and run `python -m unittest tests.test_pat_interop -v`. It
+creates a temporary configuration and mailbox, disables version reporting,
+pre-populates Pat's account-confirmation cache, blocks external HTTP via a
+local closed proxy, and uses only a loopback test connection. Use only the
+pinned Pat version: other versions may have different startup behavior.
+
+Winlink Express and compatible clients can answer a B2F secure-login challenge
+using their configured password; see Winlink's
+[data-flow document](https://winlink.org/sites/default/files/downloads/winlink_data_flow_and_data_packaging.pdf).
+This lab does not issue or verify that challenge. The local `lab-only` Telnet
+password in the Pat test is a fixture and provides no mailbox authorization.
 
 The LZHUF codec is copied from kissterm commit `f3310c71efa8e3e23263ed25745a9c365a9efc74`
 (Copyright 2026 Brad Brown Jr, MIT license; see the repository LICENSE), with
