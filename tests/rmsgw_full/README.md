@@ -1,7 +1,6 @@
 # Isolated full rmsgw gateway experiment
 
-This is a research harness, not a production gateway or a Federated CMS
-adapter. It builds the actual upstream Linux `rmsgw` main, session, login and
+This research harness builds the upstream Linux `rmsgw` main, session, login and
 gateway relay code from a **separate clean checkout** of commit
 `3147f017545f43c4b83ef6a037b8b0e38d0719af`. It does not copy GPL-licensed
 upstream source into this harness or alter the upstream checkout. The upstream
@@ -12,6 +11,16 @@ Git, `tar`, a C compiler, `pkg-config`, and libxml2 development headers installe
 
 ```text
 python3 -I tests/rmsgw_full/run_experiment.py --source /path/to/clean/rmsgw
+```
+
+To run the client exchange as well, supply a local kissterm Git checkout
+containing commit `f3310c71efa8e3e23263ed25745a9c365a9efc74` and use a Python
+interpreter with `platformdirs` installed. The runner exports the client package
+from that commit. The client runs with its upstream test profile isolation
+helper, which redirects its data directories and disables the OS keyring.
+
+```text
+python3 -I tests/rmsgw_full/run_experiment.py --source /path/to/clean/rmsgw --kissterm-source /path/to/kissterm
 ```
 
 An unavailable namespace or missing prerequisite fails the experiment; there
@@ -38,15 +47,23 @@ full test process group if a case fails, is interrupted, or times out.
 A kernel-created tunnel interface may
 exist but must remain down and have no route. The test never opens real RF,
 uses no production credentials or hostnames, and runs no network-reporting
-or hook processes. It uses a synthetic local fake CMS and an AF_UNIX
-socketpair to simulate the client-facing stream.
+or hook processes. The radio side uses an AF_UNIX socketpair and the
+gateway's CMS side connects to the isolated loopback listener.
 
-The valid case verifies the upstream gateway's Secure Gateway Login against a
-known disposable fixture, forwards all 256 byte values in each direction, and
-checks multiple synchronized fragments in both directions. It then checks a
-clean gateway exit following simulated CMS disconnect. The wrong-password
-case checks that the fake CMS rejects an incorrect gateway response and the
-gateway relays that rejection before any B2F data. It does not establish a
-real AX.25 connection, execute an actual B2F client through the gateway, or
-interoperate with the Federated CMS server. The mock CMS is a test fixture,
-not a secure implementation.
+The default run checks a known SGL response, all 256 byte values in both
+directions, synchronized fragments, and clean process exit. It also runs
+the test-only SGL adapter with the wrong gateway secret. The client stream
+must contain a denial, a B2F greeting must be absent, and the seeded mailbox
+must remain intact after reopening SQLite.
+
+With `--kissterm-source`, the pinned kissterm B2F client runs on the
+socketpair. The gateway connects to `sgl_adapter.py`, which challenges the
+configured synthetic caller and gateway, then hands the same socket to
+Federated CMS's B2F session. B2F issues its own challenge using the separate
+mailbox password. The positive case verifies a newly accepted upload and the
+exact downloaded B2 bytes, including binary attachments. After the exchange
+it reopens the shared mailbox to check the upload bytes, retained download,
+and delivery acknowledgement. Another case supplies a wrong B2F password
+and checks that the client receives the protocol rejection and both mailbox
+directions retain their original state. Every case checks for clean gateway
+exit. The kissterm terminal UI, AX.25, TNCs and RF are outside this experiment.

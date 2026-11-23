@@ -1,23 +1,19 @@
 # Linux RMS Gateway: source-level CMS interface findings
 
-**Status:** source inspection, isolated login-routine testing, and full gateway
-process login and binary relay against a mock CMS. End-to-end B2F through the
-gateway and AX.25 remain untested. Inspected
-[`nwdigitalradio/rmsgw` commit `3147f017545f43c4b83ef6a037b8b0e38d0719af`](https://github.com/nwdigitalradio/rmsgw/tree/3147f017545f43c4b83ef6a037b8b0e38d0719af)
-(declared version 2.5.1). No production Winlink endpoint
-was contacted, and no real credentials or RF equipment were used. These findings
-apply to that source revision, not every Linux RMS, BPQ, or RMS gateway.
+The pinned Linux RMS Gateway relayed a bidirectional kissterm B2F exchange to a
+Federated CMS mailbox through a synthetic Secure Gateway Login (SGL) adapter.
+The experiment ran upstream gateway session and relay code with lab build paths
+and shims in Linux namespaces. The radio-facing stream was a local socketpair.
+The gateway declares version 2.5.1.
+[Inspected rmsgw revision](https://github.com/nwdigitalradio/rmsgw/tree/3147f017545f43c4b83ef6a037b8b0e38d0719af).
 
 ## Finding
 
-The inspected gateway has an operator-editable CMS host table, so selecting an
-independent TCP endpoint appears possible in principle. **This is not proof of
-working redirection or compatibility.** Before forwarding a connected RF
-client's traffic, this revision performs a separate gateway-to-CMS login. The
-current Federated CMS B2F laboratory starts directly with a client B2F SID and
-`;PQ:` challenge; it does not speak this gateway login or accept an AX.25
-connection. Configuring the lab's current B2F port as the CMS host therefore
-cannot by itself establish the inspected gateway session.
+The operator-editable host table selected the independent loopback endpoint.
+The endpoint had to complete the gateway login first. Only then could the B2F
+server send its SID and `;PQ:` mailbox challenge through the gateway to the
+client. The direct B2F lab port starts with the SID, so this test used a
+separate gateway adapter in front of the existing B2F session.
 
 ## Source-backed path
 
@@ -89,15 +85,6 @@ cannot by itself establish the inspected gateway session.
   checks compiler, libxml2 and ncurses. Treat historical version requirements
   as unverified until an isolated build is attempted.
 
-## Next end-to-end experiment
-
-Connect a real B2F client through the actual gateway process to a separate,
-test-only gateway login adapter and local B2F server. Use synthetic callsigns,
-passwords, and B2 messages. Disable reporting, hooks and RF paths; enforce
-isolation from production destinations. Validate gateway login separately
-from the client B2F session, then verify exchange and persisted retrieval.
-The mock relay and existing client-only tests do not satisfy this gate.
-
 ## Isolated upstream login-routine experiment
 
 `tests/test_rmsgw_login.py` compiles the pinned upstream `cmslogin.c`,
@@ -131,6 +118,25 @@ all 256 byte values and fragments in both directions, and clean exit after
 the mock CMS disconnects. See the harness README for prerequisites, isolation
 details and the guarded entrypoint.
 
-This is evidence of the gateway's behavior against the mock only. It does not
-exercise AX.25, a real B2F client through the gateway, a Federated CMS gateway
-adapter, or production authentication. Those remain separate test goals.
+## Isolated client-to-mailbox experiment
+
+The full-process harness now also runs the B2F client from kissterm commit
+`f3310c71efa8e3e23263ed25745a9c365a9efc74` over the simulated client stream.
+The pinned gateway connects to a synthetic SGL adapter on loopback. It answers
+a fresh gateway challenge before the adapter hands the socket to Federated CMS.
+The client then answers the B2F server's separate mailbox challenge.
+
+The client sent and received synthetic B2 messages carrying binary attachments.
+After the session completed, a reopened SQLite mailbox contained the exact
+upload and retained download, with the delivery acknowledged. With a wrong
+gateway secret the adapter rejected the connection before the B2F greeting.
+With a valid gateway secret and a wrong mailbox password, the B2F client
+received a protocol rejection. Neither rejection changed the seeded mailbox.
+
+This validates the pinned client protocol engine, upstream gateway session
+and relay code, test-only SGL adapter, and shared lab mailbox in the isolated
+Linux build. The gateway uses the lab build paths and shims described above.
+Pat has separate direct-to-lab coverage. Pat through this gateway, RF and
+AX.25, stock installed gateway binaries, other gateway revisions, and
+production authentication remain unverified by this experiment.
+[Reproduce the four namespace cases](../tests/rmsgw_full/README.md).
