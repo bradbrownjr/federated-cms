@@ -103,6 +103,31 @@ procedure, and a deliberate operator-controlled migration.
 * Separate reviews establish intended IP and RF deployment policies. No
   production or RMS gateway compatibility is inferred from local lab tests.
 
+## Executable policy experiment
+
+`federated_cms.policy_experiment` is a disconnected SQLite test model for
+principal, mailbox, action, grant and session rules. It operates on synthetic
+fixtures only and is not wired to B2F, BPQ, actual mail, or credential
+verification. The fixture-provisioning and session-opening methods are
+trusted in-process calls, not an authentication or administration boundary.
+Use a dedicated temporary database; no existing lab or private mail is imported.
+
+The experiment checks the current session, principal, mailbox and grant inside
+the same SQLite write transaction as each fixture operation. It checks expiry
+again immediately before commit, but the check and physical commit are not
+simultaneous. Concurrent writes and revocations serialize: an operation that
+has already acquired the write transaction may complete before a later revoke.
+Its persisted clock high-water mark catches tested backward steps, but it does
+not resolve clock tampering, restoration from backup, or distributed clocks.
+It provides no per-message delivery claims, secret provisioning, rate limiting,
+audit pipeline, protected adapter transport, or production deployment policy.
+
+Run the deterministic, offline policy tests with:
+
+```text
+PYTHONPATH=src python -m unittest tests.test_policy_experiment -v
+```
+
 References: [threat model](THREAT-MODEL-M0.md), [BPQ interface](BPQ-LOCAL-INTERFACE.md),
 [Winlink data flow](https://winlink.org/sites/default/files/downloads/winlink_data_flow_and_data_packaging.pdf),
 [NIST SP 800-63B-4 authenticators](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/),
