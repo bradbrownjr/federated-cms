@@ -83,8 +83,11 @@ refused at proposal time never sends its bytes, so content collisions cannot
 be detected from that exchange alone. A receipt proves only the stated local
 or peer acceptance, not end-to-end delivery.
 
-The existing `messages` table stores text rather than raw B2 and attachments;
-the shared lab mailbox has no production grants or authenticated delivery claims.
+The existing `messages` table stores text rather than raw B2 and attachments.
+`CMSCore.lab_mailbox()` exposes `LabMailboxService` for synthetic raw B2
+fixtures in the `shared_lab_mailbox_*` tables; this is separate from the
+policy experiment below. The shared lab mailbox has no production grants or
+authenticated delivery claims.
 Its account session is a concurrency lease, and an in-process caller can
 acknowledge any pending MID in that account without a per-message claim. Its
 SQLite path is configurable, so separation into lab tables is not physical
