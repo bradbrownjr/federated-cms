@@ -14,6 +14,8 @@ import sys
 import tempfile
 
 REVISION = '3147f017545f43c4b83ef6a037b8b0e38d0719af'
+PAT_REVISION = '2ad31e8fc1f1748ac1b00cac9d88da54e3e0efe2'
+KISSTERM_REVISION = 'f3310c71efa8e3e23263ed25745a9c365a9efc74'
 FIXTURES = Path(__file__).resolve().parent
 RMSGW_SOURCES = ('rmsgw.c', 'gwinit.c', 'greet.c', 'banner.c', 'session.c',
                  'gateway.c', 'log_login.c', 'log_logout.c', 'glob.c')
@@ -25,7 +27,9 @@ LIB_SOURCES = ('fileage.c', 'syslogmap.c', 'cmsconnect.c', 'loadconfig.c',
                'var.c', 'strtrim.c', 'senddatagram.c', 'shm.c', 'statblock.c',
                'md5.c', 'readln.c', 'sglchallenge.c', 'loadversion.c',
                'loadenv.c', 'file_exists.c', 'runhook.c')
-ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C'}
+# Even a partial clone must fail locally if an archived object is missing.
+ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C',
+       'GIT_NO_LAZY_FETCH': '1', 'GIT_ALLOW_PROTOCOL': '', 'GIT_NO_REPLACE_OBJECTS': '1'}
 NAMESPACES = ('user', 'net', 'ipc', 'mnt')
 
 
@@ -44,21 +48,52 @@ def run_checked(command, timeout):
         raise
 
 
+def export_revision(checkout, revision, target, paths=()):
+    archive = target.with_suffix('.tar')
+    with archive.open('wb') as output:
+        subprocess.run(['git', '-C', str(checkout), 'archive', revision, *paths],
+                       stdout=output, check=True, env=ENV, timeout=30)
+    target.mkdir()
+    subprocess.run(['tar', '-xf', str(archive), '-C', str(target)],
+                   check=True, env=ENV, timeout=30)
+
+
+def stage_pat(binary, build):
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise ValueError('Pat binary must be an executable file')
+    staged = build / 'pat-lab'
+    shutil.copy2(binary, staged)
+    # Read embedded build information without launching Pat on the host.
+    env = dict(ENV, GOTOOLCHAIN='local', GOPROXY='off', GOENV='off', GOTELEMETRY='off')
+    info = subprocess.check_output(['go', 'version', '-m', str(staged)], text=True, env=env, timeout=15)
+    lines = {line.strip() for line in info.splitlines()}
+    expected = {'path\tgithub.com/la5nta/pat', 'build\tvcs.modified=false',
+                'build\tvcs.revision=' + PAT_REVISION}
+    if not expected.issubset(lines):
+        raise ValueError('Pat binary must contain clean build metadata for pinned revision ' + PAT_REVISION)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', required=True, help='clean checkout of the pinned rmsgw commit')
+    parser.add_argument('--kissterm-source', type=Path, help='optional local checkout containing the pinned kissterm commit')
+    parser.add_argument('--pat-binary', type=Path, help='optional Pat binary built from the pinned checkout')
     parser.add_argument('--cc', default='cc', help='C compiler')
     args = parser.parse_args()
     if sys.platform != 'linux':
         raise RuntimeError('Linux namespace isolation is required; no fallback is provided')
-    for program in (args.cc, 'git', 'tar', 'pkg-config', 'unshare', 'ip'):
+    prerequisites = [args.cc, 'git', 'tar', 'pkg-config', 'unshare', 'ip']
+    if args.pat_binary:
+        prerequisites.append('go')
+    for program in prerequisites:
         if not shutil.which(program, path=ENV['PATH']):
             raise RuntimeError('required executable missing: ' + program)
     source = Path(args.source).resolve(strict=True)
     revision = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], env=ENV, text=True).strip()
     if revision != REVISION:
         raise RuntimeError('wrong source revision: ' + revision)
-    status = subprocess.check_output(['git', '-C', str(source), 'status', '--porcelain', '--untracked-files=all'], env=ENV, text=True)
+    status = subprocess.check_output(['git', '-C', str(source), '-c', 'core.fsmonitor=false',
+                                      'status', '--porcelain', '--untracked-files=all'], env=ENV, text=True)
     if status:
         raise RuntimeError('source checkout must be clean')
     flags = shlex.split(subprocess.check_output(['pkg-config', '--cflags', '--libs', 'libxml-2.0'], env=ENV, text=True))
@@ -67,14 +102,16 @@ def main():
         build = Path(directory)
         # Ignored files (including GCC precompiled headers) must not influence
         # the build. Compile an archive of the pinned commit, not the checkout.
-        archive = build / 'source.tar'
-        with archive.open('wb') as output:
-            subprocess.run(['git', '-C', str(source), 'archive', REVISION],
-                           stdout=output, check=True, env=ENV, timeout=30)
+        export_revision(source, REVISION, build / 'source')
         source = build / 'source'
-        source.mkdir()
-        subprocess.run(['tar', '-xf', str(archive), '-C', str(source)],
-                       check=True, env=ENV, timeout=30)
+        cases = ['valid', 'wrong']
+        if args.kissterm_source:
+            export_revision(args.kissterm_source.resolve(strict=True), KISSTERM_REVISION,
+                            build / 'reference-kissterm', ('kissterm',))
+            cases.extend(('kissterm', 'wrong-mailbox'))
+        if args.pat_binary:
+            stage_pat(args.pat_binary.resolve(strict=True), build)
+            cases.append('pat')
         config = build / 'config'
         (build / 'include').mkdir()
         # The pinned headers include ../pathnames.h. Compile with this private
@@ -101,14 +138,14 @@ def main():
         run_checked(command, timeout=120)
         # Set loopback up only after unshare establishes the namespaces.
         # The case driver compares against these launcher-supplied IDs.
-        for case in ('valid', 'wrong'):
+        for case in cases:
             run_checked(
                 ['unshare', '--user', '--map-root-user', '--net', '--ipc', '--mount',
                  '--propagation', 'private', '--fork', '--kill-child',
                  '/bin/sh', '-c', 'ip link set dev lo up && exec "$@"', 'namespace-launcher',
-                 sys.executable, '-I', str(FIXTURES / 'namespace_case.py'),
+                 sys.executable, '-I', '-B', str(FIXTURES / 'namespace_case.py'),
                  str(build), case, *host_namespaces],
-                timeout=25,
+                timeout=45 if case == 'pat' else 25,
             )
             shutil.rmtree(config)
 

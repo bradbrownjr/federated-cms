@@ -1,6 +1,8 @@
 """Full rmsgw process test. Run ONLY inside the isolated test namespaces."""
+from contextlib import contextmanager
 import os
 from pathlib import Path
+import signal
 import socket
 import stat
 import subprocess
@@ -29,8 +31,66 @@ def read_exact(sock, length):
     return bytes(result)
 
 
+def relay_bytes(cms, rf_client):
+    cms.sendall(b'Callsign :\r')
+    assert read_line(cms) == b'N0CALL N0LAB-10'
+    cms.sendall(b';SQ: 23753528\r')
+    response = read_line(cms)
+    assert response == b';SR: 95074758 25000001 20'
+    # Gateway emits its own text greeting before forwarding begins.
+    # An unambiguous marker separates that from our CMS bytes.
+    incoming = b'FCMSLAB-START' + bytes(range(256)) + b'ENDLAB'
+    cms.sendall(incoming)
+    seen = bytearray()
+    while b'FCMSLAB-START' not in seen:
+        chunk = rf_client.recv(4096)
+        if not chunk:
+            raise EOFError('gateway closed before relay marker')
+        seen.extend(chunk)
+    remainder = bytes(seen).split(b'FCMSLAB-START', 1)[1]
+    while len(remainder) < len(incoming) - len(b'FCMSLAB-START'):
+        chunk = rf_client.recv(4096)
+        if not chunk:
+            raise EOFError('gateway closed during payload')
+        remainder += chunk
+    assert remainder == incoming[len(b'FCMSLAB-START'):], ('CMS-to-client mismatch', len(remainder))
+    outgoing = b'RF-LAB-START' + bytes(reversed(range(256))) + b'ENDLAB'
+    rf_client.sendall(outgoing)
+    assert read_exact(cms, len(outgoing)) == outgoing
+    # Wait for each chunk before sending the next one, forcing
+    # fragmentation at the gateway read boundary.
+    for data in (b'CMS\x00\x01\x02', b'\xff\xfe\x80CMS', b'CMS\r\nX'):
+        cms.sendall(data)
+        assert read_exact(rf_client, len(data)) == data
+    for data in (b'RF\x00\x01\x02', b'\xff\xfe\x80RF', b'RF\r\nX'):
+        rf_client.sendall(data)
+        assert read_exact(cms, len(data)) == data
+    print('PASS: full gateway SGL login and byte-for-byte relay both directions, including fragments')
+
+
+@contextmanager
+def running_gateway(command, radio_socket, *, pat_disconnect=False):
+    process = subprocess.Popen(command, stdin=radio_socket, stdout=radio_socket, stderr=subprocess.PIPE)
+    radio_socket.close()  # the child now owns the simulated radio connection
+    try:
+        yield
+        status = process.wait(timeout=8)
+        if status == 0:
+            print('Gateway exited cleanly after the session')
+        elif pat_disconnect and status == -signal.SIGPIPE:
+            print('Observed: rmsgw exited on SIGPIPE during Pat teardown')
+        else:
+            raise RuntimeError(f'gateway exited with status {status}')
+    finally:
+        if process.poll() is None:
+            process.kill()
+        _, stderr = process.communicate(timeout=3)
+        if stderr:
+            print('Gateway stderr:', stderr.decode('ascii', 'replace'))
+
+
 def main():
-    if len(sys.argv) != 7 or sys.argv[2] not in ('valid', 'wrong'):
+    if len(sys.argv) != 7 or sys.argv[2] not in ('valid', 'wrong', 'kissterm', 'wrong-mailbox', 'pat'):
         raise RuntimeError('invalid internal namespace arguments')
     for index, name in enumerate(('user', 'net', 'ipc', 'mnt'), 3):
         if os.readlink('/proc/self/ns/' + name) == sys.argv[index]:
@@ -61,6 +121,15 @@ def main():
     addresses = subprocess.check_output(['ip', '-6', '-o', 'addr', 'show'], text=True)
     if any(' inet6 ::1/128 ' not in item for item in addresses.splitlines()):
         raise RuntimeError('unexpected IPv6 address')
+    # -I excludes environment and script paths. Only import the lab source
+    # and the launcher's private, pinned kissterm export after checking isolation.
+    repo = Path(__file__).resolve().parents[2]
+    sys.path[:0] = [str(repo / 'src'), str(repo)]
+    if sys.argv[2] in ('kissterm', 'wrong-mailbox'):
+        sys.path.insert(0, str(build / 'reference-kissterm'))
+    from tests.rmsgw_full.chain_case import kissterm_exchange, pat_exchange, reject_gateway
+    from tests.rmsgw_full.sgl_adapter import GATEWAY_PASSWORD
+
     root = build / 'config'
     root.mkdir(mode=0o700)
     (root / 'stat').mkdir()
@@ -73,7 +142,7 @@ def main():
     )
     (root / 'banner').write_text('Isolated laboratory\n')
     wrong_password = sys.argv[2] == 'wrong'
-    lab_password = 'wrong-fixture' if wrong_password else 'FooBar'
+    lab_password = 'wrong-fixture' if wrong_password else GATEWAY_PASSWORD
     (root / 'channels.xml').write_text('''<rmschannels><channel name="radio" type="ax25" active="yes">
 <basecall>N0LAB</basecall><callsign>N0LAB-10</callsign><password>''' + lab_password + '''</password>
 <gridsquare>AA00AA</gridsquare><frequency>144000000</frequency><mode>0</mode>
@@ -89,74 +158,21 @@ def main():
         (root / 'hosts').write_text(host_entry)
         if (root / 'hosts').read_text() != host_entry:
             raise RuntimeError('unexpected CMS hosts')
+        command = [str(gateway), '-c', str(root / 'gateway.conf'), '-P', 'radio', 'N0CALL']
+        if sys.argv[2] == 'pat':
+            pat_exchange(build / 'pat-lab', root, listener, command, running_gateway)
+            return
         rf_client, rf_gateway = socket.socketpair()
-        rf_client.settimeout(8)
-        process = subprocess.Popen([str(gateway), '-c', str(root / 'gateway.conf'), '-P', 'radio', 'N0CALL'],
-                                   stdin=rf_gateway, stdout=rf_gateway, stderr=subprocess.PIPE)
-        rf_gateway.close()
-        try:
+        with rf_client, rf_gateway, running_gateway(command, rf_gateway):
+            rf_client.settimeout(8)
             with listener.accept()[0] as cms:
                 cms.settimeout(8)
-                cms.sendall(b'Callsign :\r')
-                assert read_line(cms) == b'N0CALL N0LAB-10'
-                cms.sendall(b';SQ: 23753528\r')
-                response = read_line(cms)
                 if wrong_password:
-                    assert response != b';SR: 95074758 25000001 20'
-                    cms.sendall(b'*** Gateway login rejected\r')
-                    # Fake CMS enforces rejection before any B2F exchange.
-                    cms.shutdown(socket.SHUT_WR)
-                    seen = bytearray()
-                    while b'Gateway login rejected' not in seen:
-                        chunk = rf_client.recv(4096)
-                        if not chunk:
-                            raise EOFError('gateway closed before rejection reached client')
-                        seen.extend(chunk)
-                    print('PASS: wrong gateway secret rejected by fake CMS before B2F')
-                    return
-                assert response == b';SR: 95074758 25000001 20'
-                # Gateway emits its own text greeting before forwarding begins.
-                # An unambiguous marker separates that from our CMS bytes.
-                incoming = b'FCMSLAB-START' + bytes(range(256)) + b'ENDLAB'
-                cms.sendall(incoming)
-                seen = bytearray()
-                while b'FCMSLAB-START' not in seen:
-                    chunk = rf_client.recv(4096)
-                    if not chunk:
-                        raise EOFError('gateway closed before relay marker')
-                    seen.extend(chunk)
-                remainder = bytes(seen).split(b'FCMSLAB-START', 1)[1]
-                while len(remainder) < len(incoming) - len(b'FCMSLAB-START'):
-                    chunk = rf_client.recv(4096)
-                    if not chunk:
-                        raise EOFError('gateway closed during payload')
-                    remainder += chunk
-                assert remainder == incoming[len(b'FCMSLAB-START'):], ('CMS-to-client mismatch', len(remainder))
-                outgoing = b'RF-LAB-START' + bytes(reversed(range(256))) + b'ENDLAB'
-                rf_client.sendall(outgoing)
-                assert read_exact(cms, len(outgoing)) == outgoing
-                # Wait for each chunk before sending the next one, forcing
-                # fragmentation at the gateway read boundary.
-                for data in (b'CMS\x00\x01\x02', b'\xff\xfe\x80CMS', b'CMS\r\nX'):
-                    cms.sendall(data)
-                    assert read_exact(rf_client, len(data)) == data
-                for data in (b'RF\x00\x01\x02', b'\xff\xfe\x80RF', b'RF\r\nX'):
-                    rf_client.sendall(data)
-                    assert read_exact(cms, len(data)) == data
-                print('PASS: full gateway SGL login and byte-for-byte relay both directions, including fragments')
-            return_code = process.wait(timeout=8)
-            if return_code != 0:
-                raise RuntimeError(f'gateway exited with status {return_code}')
-            print('PASS: gateway exited cleanly after simulated CMS disconnect')
-        finally:
-            rf_client.close()
-            if process.poll() is None:
-                process.kill()
-                process.wait(timeout=3)
-            stderr = process.stderr.read()
-            process.stderr.close()
-            if stderr:
-                print('Gateway stderr:', stderr.decode('ascii', 'replace'))
+                    reject_gateway(cms, rf_client, root)
+                elif sys.argv[2] in ('kissterm', 'wrong-mailbox'):
+                    kissterm_exchange(cms, rf_client, root, wrong_mailbox=sys.argv[2] == 'wrong-mailbox')
+                else:
+                    relay_bytes(cms, rf_client)
 
 
 if __name__ == '__main__':

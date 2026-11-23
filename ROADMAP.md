@@ -18,7 +18,7 @@ Milestone exit gates remain open until demonstrated. Checked items denote comple
 - [x] Inventory existing kissterm client-side B2F implementation and documented experimental-CMS download (see [findings](docs/KISSTERM-B2F-FINDINGS.md)).
 - [ ] Reuse kissterm protocol fixtures to build an offline, minimal independent B2F server and test with kissterm and Pat.
 - [ ] Cross-check B2F client/RMS behavior against Pat and wl2k-go.
-- [x] Inspect Linux RMS Gateway source for actual RMS-to-CMS transport, configuration and dependencies ([source findings](docs/RMS-GATEWAY-FINDINGS.md)); independent gateway interoperation remains untested.
+- [x] Inspect the Linux RMS Gateway transport, configuration and dependencies. Exercise the pinned gateway with kissterm and Pat, the test-only SGL adapter, and a persistent B2F mailbox on isolated loopback. [Gateway findings](docs/RMS-GATEWAY-FINDINGS.md).
 - [x] Test independent B2F endpoint with Pat in an isolated lab (synthetic messages via test-only localhost Telnet shim; authentication remains open).
 - [ ] Determine whether unmodified RMS software can use a self-hosted CMS; record blockers and alternatives.
 - [ ] Map Winlink email-based information requests into a generic service-request adapter.
