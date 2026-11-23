@@ -60,9 +60,9 @@ class CMSCore:
                     "truncated": False,
                     "provenance": {"source": "Federated CMS deterministic test weather", "fetched_at": wire_time(utc_now()), "stale": False},
                 }
-                self.store.finish(row["id"], "completed", result, wire_time(utc_now()))
+                self.store.finish(row["id"], row["processing_lease_token"], "completed", result, wire_time(utc_now()))
             except Exception as exc:
-                self.store.finish(row["id"], "failed", {"status": "error", "error_code": "internal_error", "error_detail": str(exc)[:160]}, wire_time(utc_now()))
+                self.store.finish(row["id"], row["processing_lease_token"], "failed", {"status": "error", "error_code": "internal_error", "error_detail": str(exc)[:160]}, wire_time(utc_now()))
             done += 1
         return done
 

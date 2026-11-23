@@ -42,6 +42,7 @@ class TerminalSession:
     def __init__(self, core: CMSCore, reader: BinaryIO, writer: BinaryIO):
         self.core, self.reader, self.writer = core, reader, writer
         self.context = SessionContext(scope=uuid.uuid4().hex)
+        self._skip_lf = False
 
     def _write(self, line: str) -> None:
         safe = line.encode("ascii", "replace").replace(b"\x1b", b"?")[:512]
@@ -49,10 +50,22 @@ class TerminalSession:
         self.writer.flush()
 
     def _readline(self) -> str | None:
-        raw = self.reader.readline(MAX_LINE + 1)
-        if not raw:
-            return None
-        if len(raw) > MAX_LINE and not raw.endswith((b"\n", b"\r")):
+        raw = bytearray()
+        while len(raw) <= MAX_LINE:
+            byte = self.reader.read(1)
+            if not byte:
+                return None if not raw else self._decode_line(bytes(raw))
+            if self._skip_lf:
+                self._skip_lf = False
+                if byte == b"\n":
+                    continue
+            if byte == b"\r":
+                self._skip_lf = True
+                return self._decode_line(bytes(raw))
+            if byte == b"\n":
+                return self._decode_line(bytes(raw))
+            raw.extend(byte)
+        if len(raw) > MAX_LINE:
             # Drain a bounded amount only. If no terminator appears, close the
             # session instead of allowing an unbounded allocation/read.
             for _ in range(4096):
@@ -63,6 +76,9 @@ class TerminalSession:
                 return None
             self._write("ERR line too long")
             return ""
+        return self._decode_line(bytes(raw))
+
+    def _decode_line(self, raw: bytes) -> str:
         try:
             text = raw.decode("ascii")
         except UnicodeDecodeError:
@@ -81,7 +97,8 @@ class TerminalSession:
             self.context = SessionContext(self.context.scope, call, base, ssid)
             self._write(f"Station: {call} (claimed; not authenticated)")
         elif first:
-            self._command(first)
+            if not self._command(first):
+                return
         while True:
             self._write("FCMS>")
             line = self._readline()

@@ -55,6 +55,17 @@ class CoreTests(unittest.TestCase):
         recovered = core.store.claim_next(now, wire_time(utc_now() + timedelta(seconds=30)))
         self.assertEqual(recovered["id"], receipt.request_id)
 
+    def test_stale_worker_cannot_overwrite_new_lease_result(self):
+        core = make_core(self.path)
+        receipt = core.submit_weather("FN43", "scope-a")
+        now = wire_time(utc_now())
+        old = core.store.claim_next(now, now)
+        new = core.store.claim_next(now, wire_time(utc_now() + timedelta(seconds=30)))
+        self.assertNotEqual(old["processing_lease_token"], new["processing_lease_token"])
+        self.assertTrue(core.store.finish(receipt.request_id, new["processing_lease_token"], "completed", {"worker": "new"}, now))
+        self.assertFalse(core.store.finish(receipt.request_id, old["processing_lease_token"], "completed", {"worker": "old"}, now))
+        self.assertEqual(core.request(receipt.request_id, "scope-a").result, {"worker": "new"})
+
     def test_expiration_prevents_execution(self):
         core = make_core(self.path)
         receipt = core.submit_weather("FN43", "scope-a", ttl=timedelta(seconds=-1))

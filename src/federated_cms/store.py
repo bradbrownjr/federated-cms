@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,7 @@ class SQLiteStore:
                     status TEXT NOT NULL CHECK(status IN ('queued','processing','completed','failed','expired')),
                     created_at TEXT NOT NULL, expires_at TEXT NOT NULL, result_json TEXT,
                     updated_at TEXT NOT NULL, public INTEGER NOT NULL DEFAULT 0,
-                    processing_lease_until TEXT
+                    processing_lease_until TEXT, processing_lease_token TEXT
                 );
                 CREATE INDEX IF NOT EXISTS requests_owner_created ON requests(owner_scope, created_at DESC);
                 CREATE INDEX IF NOT EXISTS requests_status_expiry ON requests(status, expires_at);
@@ -70,6 +71,8 @@ class SQLiteStore:
                     con.execute("ALTER TABLE requests ADD COLUMN public INTEGER NOT NULL DEFAULT 0")
                 if "processing_lease_until" not in columns:
                     con.execute("ALTER TABLE requests ADD COLUMN processing_lease_until TEXT")
+                if "processing_lease_token" not in columns:
+                    con.execute("ALTER TABLE requests ADD COLUMN processing_lease_token TEXT")
         except sqlite3.Error as exc:
             raise StoreUnavailable("database initialization failed") from exc
 
@@ -120,27 +123,31 @@ class SQLiteStore:
             with self._connect() as con:
                 con.execute("BEGIN IMMEDIATE")
                 con.execute("UPDATE requests SET status='expired', updated_at=? WHERE status IN ('queued','processing') AND expires_at <= ?", (now, now))
-                con.execute("""UPDATE requests SET status='queued', processing_lease_until=NULL, updated_at=?
+                con.execute("""UPDATE requests SET status='queued', processing_lease_until=NULL, processing_lease_token=NULL, updated_at=?
                                WHERE status='processing' AND expires_at > ? AND processing_lease_until <= ?""",
                             (now, now, now))
                 row = con.execute("SELECT * FROM requests WHERE status='queued' AND expires_at > ? ORDER BY created_at LIMIT 1", (now,)).fetchone()
                 if row:
-                    con.execute("UPDATE requests SET status='processing', processing_lease_until=?, updated_at=? WHERE id=?", (lease_until, now, row["id"]))
+                    con.execute("UPDATE requests SET status='processing', processing_lease_until=?, processing_lease_token=?, updated_at=? WHERE id=?",
+                                (lease_until, uuid.uuid4().hex, now, row["id"]))
                     row = con.execute("SELECT * FROM requests WHERE id=?", (row["id"],)).fetchone()
                 con.execute("COMMIT")
                 return row
         except sqlite3.Error as exc:
             raise StoreUnavailable("queue unavailable") from exc
 
-    def finish(self, request_id: str, status: str, result: dict[str, Any], now: str) -> None:
+    def finish(self, request_id: str, lease_token: str, status: str, result: dict[str, Any], now: str) -> bool:
         if status not in {"completed", "failed"}:
             raise ValueError("invalid terminal request state")
         try:
             with self._connect() as con:
                 con.execute("BEGIN IMMEDIATE")
-                con.execute("UPDATE requests SET status=?, result_json=?, processing_lease_until=NULL, updated_at=? WHERE id=? AND status='processing'",
-                            (status, json.dumps(result, sort_keys=True), now, request_id))
+                cursor = con.execute("""UPDATE requests SET status=?, result_json=?, processing_lease_until=NULL,
+                                      processing_lease_token=NULL, updated_at=?
+                                      WHERE id=? AND status='processing' AND processing_lease_token=?""",
+                                     (status, json.dumps(result, sort_keys=True), now, request_id, lease_token))
                 con.execute("COMMIT")
+                return cursor.rowcount == 1
         except sqlite3.Error as exc:
             raise StoreUnavailable("could not record result") from exc
 

@@ -53,6 +53,18 @@ class TerminalTests(unittest.TestCase):
         self.assertIn("HELP STATUS SERVICES", result)
         self.assertNotIn("Station: HELP", result)
 
+    def test_first_line_quit_disconnects(self):
+        result = transcript(make_core(self.path / "a.sqlite"), "QUIT\nHELP\n")
+        self.assertIn("Bye.", result)
+        self.assertNotIn("HELP STATUS SERVICES", result)
+
+    def test_cr_lf_and_crlf_line_endings(self):
+        for ending in ("\r", "\n", "\r\n"):
+            with self.subTest(ending=repr(ending)):
+                result = transcript(make_core(self.path / f"{ord(ending[0])}.sqlite"), f"HELP{ending}QUIT{ending}")
+                self.assertIn("HELP STATUS SERVICES", result)
+                self.assertIn("Bye.", result)
+
     def test_public_weather_result_survives_reconnect(self):
         core = make_core(self.path / "a.sqlite")
         first = transcript(core, "WX FN43\nQUIT\n")
