@@ -139,8 +139,23 @@ Pat's Telnet prompts and handed the connected socket to the gateway. Pat
 composed and sent the upload, filed the received download in its inbox,
 and exited successfully. Reopening the database confirmed the exact upload
 and the acknowledged download. Pat's inbox preserved the complete downloaded
-body and binary attachment. The gateway exited on SIGPIPE during Pat
-teardown. A clean gateway exit for this path remains unverified.
+body and binary attachment.
+
+In an ordinary five-case run, the gateway exited zero in the four other cases
+and received SIGPIPE in the Pat case. A second Pat run traced the gateway
+process with Linux strace 6.13 inside fresh isolated namespaces. The gateway
+forwarded Pat's final B2F `FQ` to the CMS socket, read EOF on the Pat socket
+and closed the CMS descriptor. Its session-statistics write to Pat returned
+the full byte count. Its next write, the 21-byte station sign-off
+`; N0CALL de N0LAB SK\n`, returned `EPIPE`, followed by SIGPIPE and process
+exit. The successful statistics write establishes local kernel acceptance only.
+Pat exited zero, and the client and reopened mailbox checks passed in both runs.
+
+The pinned source writes the sign-off before recording logout and updating
+per-user statistics. The signal interrupted those later steps in the traced
+session. A clean gateway exit on the Pat path remains unverified. The trace
+covers a single loopback session and does not establish close ordering on
+other transports. [Pinned gateway session code](https://github.com/nwdigitalradio/rmsgw/blob/3147f017545f43c4b83ef6a037b8b0e38d0719af/rmsgw/session.c#L169-L201).
 
 This validates the pinned client protocol engine and CLI, upstream gateway session
 and relay code, test-only SGL adapter, and shared lab mailbox in the isolated
