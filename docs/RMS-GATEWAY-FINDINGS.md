@@ -119,3 +119,18 @@ success after sending its response without waiting for server acceptance. The
 test fixture—not the upstream routine—recognizes the response as incorrect.
 This validates the isolated upstream function only, not the full gateway
 process, a Federated CMS gateway adapter, binary relay, or interoperability.
+
+## Isolated full-process relay experiment
+
+The optional Linux harness in `tests/rmsgw_full/` builds the pinned gateway
+from a Git archive and starts its actual main, session and relay code inside
+private user, network, IPC and mount namespaces. A synthetic local CMS checks
+the gateway login; an AF_UNIX socketpair simulates the client stream. The
+experiment verifies a valid login, rejection of an incorrect fixture secret,
+all 256 byte values and fragments in both directions, and clean exit after
+the mock CMS disconnects. See the harness README for prerequisites, isolation
+details and the guarded entrypoint.
+
+This is evidence of the gateway's behavior against the mock only. It does not
+exercise AX.25, a real B2F client through the gateway, a Federated CMS gateway
+adapter, or production authentication. Those remain separate test goals.
