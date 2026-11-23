@@ -1,8 +1,10 @@
 # Linux RMS Gateway: source-level CMS interface findings
 
-**Status:** source inspection and isolated login-routine test; full gateway interoperability remains untested. Inspected
+**Status:** source inspection, isolated login-routine testing, and full gateway
+process login and binary relay against a mock CMS. End-to-end B2F through the
+gateway and AX.25 remain untested. Inspected
 [`nwdigitalradio/rmsgw` commit `3147f017545f43c4b83ef6a037b8b0e38d0719af`](https://github.com/nwdigitalradio/rmsgw/tree/3147f017545f43c4b83ef6a037b8b0e38d0719af)
-(declared version 2.5.1). No full gateway was run, no production Winlink endpoint
+(declared version 2.5.1). No production Winlink endpoint
 was contacted, and no real credentials or RF equipment were used. These findings
 apply to that source revision, not every Linux RMS, BPQ, or RMS gateway.
 
@@ -87,16 +89,14 @@ cannot by itself establish the inspected gateway session.
   checks compiler, libxml2 and ncurses. Treat historical version requirements
   as unverified until an isolated build is attempted.
 
-## Next isolated experiment
+## Next end-to-end experiment
 
-Create a separate test-only gateway login adapter and an isolated gateway
-configuration whose only host is loopback. Use synthetic callsigns, passwords,
-and B2 messages. Disable reporting, hooks and RF paths; enforce isolation from
-production destinations. Test both valid and invalid `;SQ:` / `;SR:` gateway
-logins before allowing a distinct client B2F session, and verify byte-for-byte
-binary forwarding, fragmentation, disconnect and failure handling. Reproduce
-the actual gateway process and its launch context before making a compatibility
-claim. The existing client-only B2F and Pat-shim tests do not satisfy this gate.
+Connect a real B2F client through the actual gateway process to a separate,
+test-only gateway login adapter and local B2F server. Use synthetic callsigns,
+passwords, and B2 messages. Disable reporting, hooks and RF paths; enforce
+isolation from production destinations. Validate gateway login separately
+from the client B2F session, then verify exchange and persisted retrieval.
+The mock relay and existing client-only tests do not satisfy this gate.
 
 ## Isolated upstream login-routine experiment
 
