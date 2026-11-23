@@ -14,6 +14,7 @@ import sys
 import tempfile
 
 REVISION = '3147f017545f43c4b83ef6a037b8b0e38d0719af'
+PAT_REVISION = '2ad31e8fc1f1748ac1b00cac9d88da54e3e0efe2'
 KISSTERM_REVISION = 'f3310c71efa8e3e23263ed25745a9c365a9efc74'
 FIXTURES = Path(__file__).resolve().parent
 RMSGW_SOURCES = ('rmsgw.c', 'gwinit.c', 'greet.c', 'banner.c', 'session.c',
@@ -57,15 +58,34 @@ def export_revision(checkout, revision, target, paths=()):
                    check=True, env=ENV, timeout=30)
 
 
+def stage_pat(binary, build):
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise ValueError('Pat binary must be an executable file')
+    staged = build / 'pat-lab'
+    shutil.copy2(binary, staged)
+    # Read embedded build information without launching Pat on the host.
+    env = dict(ENV, GOTOOLCHAIN='local', GOPROXY='off', GOENV='off', GOTELEMETRY='off')
+    info = subprocess.check_output(['go', 'version', '-m', str(staged)], text=True, env=env, timeout=15)
+    lines = {line.strip() for line in info.splitlines()}
+    expected = {'path\tgithub.com/la5nta/pat', 'build\tvcs.modified=false',
+                'build\tvcs.revision=' + PAT_REVISION}
+    if not expected.issubset(lines):
+        raise ValueError('Pat binary must contain clean build metadata for pinned revision ' + PAT_REVISION)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', required=True, help='clean checkout of the pinned rmsgw commit')
     parser.add_argument('--kissterm-source', type=Path, help='optional local checkout containing the pinned kissterm commit')
+    parser.add_argument('--pat-binary', type=Path, help='optional Pat binary built from the pinned checkout')
     parser.add_argument('--cc', default='cc', help='C compiler')
     args = parser.parse_args()
     if sys.platform != 'linux':
         raise RuntimeError('Linux namespace isolation is required; no fallback is provided')
-    for program in (args.cc, 'git', 'tar', 'pkg-config', 'unshare', 'ip'):
+    prerequisites = [args.cc, 'git', 'tar', 'pkg-config', 'unshare', 'ip']
+    if args.pat_binary:
+        prerequisites.append('go')
+    for program in prerequisites:
         if not shutil.which(program, path=ENV['PATH']):
             raise RuntimeError('required executable missing: ' + program)
     source = Path(args.source).resolve(strict=True)
@@ -89,6 +109,9 @@ def main():
             export_revision(args.kissterm_source.resolve(strict=True), KISSTERM_REVISION,
                             build / 'reference-kissterm', ('kissterm',))
             cases.extend(('kissterm', 'wrong-mailbox'))
+        if args.pat_binary:
+            stage_pat(args.pat_binary.resolve(strict=True), build)
+            cases.append('pat')
         config = build / 'config'
         (build / 'include').mkdir()
         # The pinned headers include ../pathnames.h. Compile with this private
@@ -122,7 +145,7 @@ def main():
                  '/bin/sh', '-c', 'ip link set dev lo up && exec "$@"', 'namespace-launcher',
                  sys.executable, '-I', '-B', str(FIXTURES / 'namespace_case.py'),
                  str(build), case, *host_namespaces],
-                timeout=25,
+                timeout=45 if case == 'pat' else 25,
             )
             shutil.rmtree(config)
 

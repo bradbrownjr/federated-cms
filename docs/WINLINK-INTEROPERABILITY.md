@@ -31,7 +31,7 @@ Can an existing Winlink-compatible client exchange B2F messages with an independ
 - Record exact behaviors and discrepancies; do not infer compatibility with other clients.
 
 ### W2: Gateway-to-CMS investigation
-- The pinned Linux gateway relayed a bidirectional kissterm B2F exchange to the shared lab mailbox through a test-only SGL adapter. Separate wrong-secret cases exercised gateway and client authentication. [RMS gateway findings](RMS-GATEWAY-FINDINGS.md).
+- The pinned Linux gateway relayed bidirectional kissterm and Pat B2F exchanges to the shared lab mailbox through a test-only SGL adapter. Separate wrong-secret cases exercised gateway and client authentication. [RMS gateway findings](RMS-GATEWAY-FINDINGS.md).
 - Inspect rmsgw and publicly available BPQ integration/configuration.
 - Map protocol, authentication, API/endpoint dependencies, routing, server selection and failure behavior.
 - Classify each dependency: documented/open, reproducible, configurable, closed, or unknown.

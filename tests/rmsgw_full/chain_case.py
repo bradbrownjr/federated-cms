@@ -83,3 +83,27 @@ def kissterm_exchange(cms, rf_client, root, wrong_mailbox=False):
         assert incoming == [(upload.mid, serialize(upload))] and not pending
         print('PASS: kissterm exchanged both B2 messages and binary attachments through rmsgw; '
               'reopened mailbox retained the upload and download acknowledgement')
+
+
+def pat_exchange(binary, root, cms_listener, command, running_gateway):
+    from tests.pat_fixture import run_pat_exchange, transport_login, verify_pat_exchange
+
+    db_path = root / 'mail.sqlite'
+    store = SQLiteStore(db_path)
+    with socket.socket() as radio_listener, ThreadPoolExecutor(max_workers=1) as pool:
+        radio_listener.settimeout(10)
+        radio_listener.bind(('127.0.0.1', 0))
+        radio_listener.listen(1)
+        pat = pool.submit(run_pat_exchange, binary, root, radio_listener.getsockname()[1],
+                          store, MAILBOX_PASSWORD)
+        with radio_listener.accept()[0] as radio:
+            if not transport_login(radio):
+                raise AssertionError('Pat did not complete the synthetic Telnet prompts')
+            # Hand the same connected fd to rmsgw. Only the gateway can connect
+            # Pat's stream to the SGL adapter on the separate CMS listener.
+            with running_gateway(command, radio, pat_disconnect=True), cms_listener.accept()[0] as cms:
+                assert serve_gateway(cms, store), 'gateway failed SGL'
+        uploaded = pat.result(timeout=10)
+    verify_pat_exchange(root, SQLiteStore(db_path), uploaded)
+    print('PASS: Pat CLI exchanged both B2 messages and attachments through rmsgw; '
+          'verified client inbox, sent folder, and reopened mailbox')

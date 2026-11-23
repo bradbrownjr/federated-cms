@@ -23,6 +23,16 @@ helper, which redirects its data directories and disables the OS keyring.
 python3 -I tests/rmsgw_full/run_experiment.py --source /path/to/clean/rmsgw --kissterm-source /path/to/kissterm
 ```
 
+To include the Pat CLI case, supply a trusted local binary built in a clean
+checkout of Pat commit `2ad31e8fc1f1748ac1b00cac9d88da54e3e0efe2`. The
+launcher uses `go version -m` to check the staged binary's module path,
+revision, and clean build metadata before running it inside the namespaces.
+The two client options can be used independently or together.
+
+```text
+python3 -I tests/rmsgw_full/run_experiment.py --source /path/to/clean/rmsgw --kissterm-source /path/to/kissterm --pat-binary /path/to/pat
+```
+
 An unavailable namespace or missing prerequisite fails the experiment; there
 is no unsafe fallback. The runner verifies source revision and checkout state,
 then builds a Git archive of the pinned commit in a private directory under
@@ -47,8 +57,9 @@ full test process group if a case fails, is interrupted, or times out.
 A kernel-created tunnel interface may
 exist but must remain down and have no route. The test never opens real RF,
 uses no production credentials or hostnames, and runs no network-reporting
-or hook processes. The radio side uses an AF_UNIX socketpair and the
-gateway's CMS side connects to the isolated loopback listener.
+or hook processes. The radio-side stream is an AF_UNIX socketpair for the raw
+relay and kissterm cases and an accepted loopback socket for Pat. The gateway's
+CMS side connects to a separate isolated loopback listener in every case.
 
 The default run checks a known SGL response, all 256 byte values in both
 directions, synchronized fragments, and clean process exit. It also runs
@@ -65,5 +76,17 @@ exact downloaded B2 bytes, including binary attachments. After the exchange
 it reopens the shared mailbox to check the upload bytes, retained download,
 and delivery acknowledgement. Another case supplies a wrong B2F password
 and checks that the client receives the protocol rejection and both mailbox
-directions retain their original state. Every case checks for clean gateway
-exit. The kissterm terminal UI, AX.25, TNCs and RF are outside this experiment.
+directions retain their original state. These cases require clean gateway exit.
+
+The Pat case composes an upload and supplies the CLI with two synthetic
+Telnet prompts. The accepted socket then becomes the gateway's stdin and
+stdout for the complete exchange. The test checks the uploaded B2 bytes
+against Pat's original outbox file, the move to its sent folder, the downloaded
+message body and attachment in its inbox, and the durable server-side
+acknowledgement. Pat adds a local unread header to its inbox copy.
+
+Pat completed the exchange and returned zero. The upstream gateway exited
+on SIGPIPE during Pat teardown in this build. The harness
+reports the observed gateway exit and accepts zero or SIGPIPE only for this
+case, while requiring all client and database checks to pass. The kissterm
+terminal UI, AX.25, TNCs and RF are outside these experiments.

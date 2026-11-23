@@ -1,9 +1,9 @@
 # Linux RMS Gateway: source-level CMS interface findings
 
-The pinned Linux RMS Gateway relayed a bidirectional kissterm B2F exchange to a
+The pinned Linux RMS Gateway relayed bidirectional B2F exchanges from kissterm and Pat to a
 Federated CMS mailbox through a synthetic Secure Gateway Login (SGL) adapter.
 The experiment ran upstream gateway session and relay code with lab build paths
-and shims in Linux namespaces. The radio-facing stream was a local socketpair.
+and shims in Linux namespaces. The simulated radio-facing streams used a socketpair or a loopback socket.
 The gateway declares version 2.5.1.
 [Inspected rmsgw revision](https://github.com/nwdigitalradio/rmsgw/tree/3147f017545f43c4b83ef6a037b8b0e38d0719af).
 
@@ -133,10 +133,18 @@ gateway secret the adapter rejected the connection before the B2F greeting.
 With a valid gateway secret and a wrong mailbox password, the B2F client
 received a protocol rejection. Neither rejection changed the seeded mailbox.
 
-This validates the pinned client protocol engine, upstream gateway session
+A second run used the Pat CLI built from commit
+`2ad31e8fc1f1748ac1b00cac9d88da54e3e0efe2`. A loopback listener supplied
+Pat's Telnet prompts and handed the connected socket to the gateway. Pat
+composed and sent the upload, filed the received download in its inbox,
+and exited successfully. Reopening the database confirmed the exact upload
+and the acknowledged download. Pat's inbox preserved the complete downloaded
+body and binary attachment. The gateway exited on SIGPIPE during Pat
+teardown. A clean gateway exit for this path remains unverified.
+
+This validates the pinned client protocol engine and CLI, upstream gateway session
 and relay code, test-only SGL adapter, and shared lab mailbox in the isolated
 Linux build. The gateway uses the lab build paths and shims described above.
-Pat has separate direct-to-lab coverage. Pat through this gateway, RF and
-AX.25, stock installed gateway binaries, other gateway revisions, and
+RF and AX.25, stock installed gateway binaries, other gateway revisions, and
 production authentication remain unverified by this experiment.
-[Reproduce the four namespace cases](../tests/rmsgw_full/README.md).
+[Reproduce the five namespace cases](../tests/rmsgw_full/README.md).

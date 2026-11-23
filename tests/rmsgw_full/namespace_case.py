@@ -1,6 +1,8 @@
 """Full rmsgw process test. Run ONLY inside the isolated test namespaces."""
+from contextlib import contextmanager
 import os
 from pathlib import Path
+import signal
 import socket
 import stat
 import subprocess
@@ -66,8 +68,29 @@ def relay_bytes(cms, rf_client):
     print('PASS: full gateway SGL login and byte-for-byte relay both directions, including fragments')
 
 
+@contextmanager
+def running_gateway(command, radio_socket, *, pat_disconnect=False):
+    process = subprocess.Popen(command, stdin=radio_socket, stdout=radio_socket, stderr=subprocess.PIPE)
+    radio_socket.close()  # the child now owns the simulated radio connection
+    try:
+        yield
+        status = process.wait(timeout=8)
+        if status == 0:
+            print('Gateway exited cleanly after the session')
+        elif pat_disconnect and status == -signal.SIGPIPE:
+            print('Observed: rmsgw exited on SIGPIPE during Pat teardown')
+        else:
+            raise RuntimeError(f'gateway exited with status {status}')
+    finally:
+        if process.poll() is None:
+            process.kill()
+        _, stderr = process.communicate(timeout=3)
+        if stderr:
+            print('Gateway stderr:', stderr.decode('ascii', 'replace'))
+
+
 def main():
-    if len(sys.argv) != 7 or sys.argv[2] not in ('valid', 'wrong', 'kissterm', 'wrong-mailbox'):
+    if len(sys.argv) != 7 or sys.argv[2] not in ('valid', 'wrong', 'kissterm', 'wrong-mailbox', 'pat'):
         raise RuntimeError('invalid internal namespace arguments')
     for index, name in enumerate(('user', 'net', 'ipc', 'mnt'), 3):
         if os.readlink('/proc/self/ns/' + name) == sys.argv[index]:
@@ -104,7 +127,7 @@ def main():
     sys.path[:0] = [str(repo / 'src'), str(repo)]
     if sys.argv[2] in ('kissterm', 'wrong-mailbox'):
         sys.path.insert(0, str(build / 'reference-kissterm'))
-    from tests.rmsgw_full.chain_case import kissterm_exchange, reject_gateway
+    from tests.rmsgw_full.chain_case import kissterm_exchange, pat_exchange, reject_gateway
     from tests.rmsgw_full.sgl_adapter import GATEWAY_PASSWORD
 
     root = build / 'config'
@@ -135,12 +158,13 @@ def main():
         (root / 'hosts').write_text(host_entry)
         if (root / 'hosts').read_text() != host_entry:
             raise RuntimeError('unexpected CMS hosts')
+        command = [str(gateway), '-c', str(root / 'gateway.conf'), '-P', 'radio', 'N0CALL']
+        if sys.argv[2] == 'pat':
+            pat_exchange(build / 'pat-lab', root, listener, command, running_gateway)
+            return
         rf_client, rf_gateway = socket.socketpair()
-        rf_client.settimeout(8)
-        process = subprocess.Popen([str(gateway), '-c', str(root / 'gateway.conf'), '-P', 'radio', 'N0CALL'],
-                                   stdin=rf_gateway, stdout=rf_gateway, stderr=subprocess.PIPE)
-        rf_gateway.close()
-        try:
+        with rf_client, rf_gateway, running_gateway(command, rf_gateway):
+            rf_client.settimeout(8)
             with listener.accept()[0] as cms:
                 cms.settimeout(8)
                 if wrong_password:
@@ -149,19 +173,6 @@ def main():
                     kissterm_exchange(cms, rf_client, root, wrong_mailbox=sys.argv[2] == 'wrong-mailbox')
                 else:
                     relay_bytes(cms, rf_client)
-            return_code = process.wait(timeout=8)
-            if return_code != 0:
-                raise RuntimeError(f'gateway exited with status {return_code}')
-            print('PASS: gateway exited cleanly after simulated CMS disconnect')
-        finally:
-            rf_client.close()
-            if process.poll() is None:
-                process.kill()
-                process.wait(timeout=3)
-            stderr = process.stderr.read()
-            process.stderr.close()
-            if stderr:
-                print('Gateway stderr:', stderr.decode('ascii', 'replace'))
 
 
 if __name__ == '__main__':
