@@ -147,6 +147,31 @@ class B2FLabTests(unittest.TestCase):
                     server.shutdown()
                     thread.join()
 
+    def test_invalid_multi_message_response_keeps_entire_outbox_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteStore(Path(directory) / "lab.sqlite")
+            store.initialize()
+            for mid in ("TEST123", "TEST456"):
+                store.b2f_lab_store("TEST1", mid, f"Mid: {mid}\r\nBody: 0\r\n\r\n".encode(), "out")
+            with LabServer(("127.0.0.1", 0), store, "TEST1", self.PASSWORD) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    with socket.create_connection(server.server_address, timeout=3) as client:
+                        client.settimeout(3)
+                        with client.makefile("rb") as reader:
+                            self._handshake(client, reader)
+                            client.sendall(b"FF\r")
+                            self.assertTrue(self._line(reader).startswith(b"FC EM TEST123 "))
+                            self.assertTrue(self._line(reader).startswith(b"FC EM TEST456 "))
+                            self.assertTrue(self._line(reader).startswith(b"F> "))
+                            client.sendall(b"FS -?\r")
+                            self.assertEqual(self._line(reader), b"*** Protocol error")
+                    self.assertEqual([mid for mid, _ in store.b2f_lab_outbox("TEST1")], ["TEST123", "TEST456"])
+                finally:
+                    server.shutdown()
+                    thread.join()
+
     def test_empty_exchange_and_proposal_deferral(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteStore(Path(directory) / "lab.sqlite")

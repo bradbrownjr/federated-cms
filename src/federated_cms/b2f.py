@@ -199,6 +199,8 @@ class Session:
                     answer = self.read_line()
                     if not answer.startswith(b"FS ") or len(answer[3:]) != len(encoded):
                         raise ProtocolError("bad response")
+                    if any(choice not in b"+Yy-NnRr=LlHh" for choice in answer[3:]):
+                        raise ProtocolError("unsupported response")
                     accepted = []
                     for (mid, _, data), choice in zip(encoded, answer[3:]):
                         if choice in b"+Yy":
@@ -206,8 +208,6 @@ class Session:
                             accepted.append(mid)
                         elif choice in b"-NnRr":
                             self.store.b2f_lab_delivered(self.account, mid)
-                        elif choice not in b"=LlHh":
-                            raise ProtocolError("unsupported response")
                     line = self.read_line()
                     pending_delivery = accepted
                 else:
