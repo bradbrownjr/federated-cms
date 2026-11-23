@@ -66,3 +66,20 @@ jobs:
         env:
           FCMS_PAT_BINARY: ${{ runner.temp }}/pat-lab
         run: python -m unittest tests.test_pat_interop -v
+
+  rmsgw-login:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nwdigitalradio/rmsgw
+          ref: 3147f017545f43c4b83ef6a037b8b0e38d0719af
+          path: reference-rmsgw
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Exercise upstream login routine over local socket pairs
+        env:
+          FCMS_RMSGW_SOURCE: ${{ github.workspace }}/reference-rmsgw
+        run: python -m unittest tests.test_rmsgw_login -v
