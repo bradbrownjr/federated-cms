@@ -34,8 +34,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Install Federated CMS
-        run: python -m pip install -e .
+      - name: Install Federated CMS and kissterm dependencies
+        run: python -m pip install -e . ./reference-kissterm
       - name: Test real kissterm client offline
         env:
           FCMS_KISSTERM_PATH: ${{ github.workspace }}/reference-kissterm
