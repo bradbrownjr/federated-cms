@@ -12,6 +12,80 @@ from federated_cms.store import SQLiteStore
 
 
 class B2FLabTests(unittest.TestCase):
+    @staticmethod
+    def _line(reader):
+        data = bytearray()
+        while (byte := reader.read(1)) and byte != b"\r":
+            data.extend(byte)
+        return bytes(data)
+
+    def test_outbound_delivery_requires_valid_next_turn(self):
+        for response in (b"BAD\r", b"FC broken\r", b"", b"FF\r"):
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as directory:
+                store = SQLiteStore(Path(directory) / "lab.sqlite")
+                store.initialize()
+                raw = b"Mid: TEST123\r\nBody: 5\r\n\r\nhello"
+                store.b2f_lab_store("TEST1", "TEST123", raw, "out")
+                with LabServer(("127.0.0.1", 0), store, "TEST1") as server:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    try:
+                        with socket.create_connection(server.server_address, timeout=3) as client:
+                            client.settimeout(3)
+                            with client.makefile("rb") as reader:
+                                self._line(reader)
+                                self._line(reader)
+                                client.sendall(b";FW: TEST1\r[client-1-B2FHM$]\rFF\r")
+                                self.assertTrue(self._line(reader).startswith(b"FC EM TEST123 "))
+                                self.assertTrue(self._line(reader).startswith(b"F> "))
+                                client.sendall(b"FS +\r")
+                                self.assertEqual(reader.read(1), b"\x01")
+                                header_len = reader.read(1)[0]
+                                reader.read(header_len)
+                                while True:
+                                    kind = reader.read(1)
+                                    if kind == b"\x04":
+                                        reader.read(1)
+                                        break
+                                    self.assertEqual(kind, b"\x02")
+                                    size = reader.read(1)[0] or 256
+                                    self.assertEqual(len(reader.read(size)), size)
+                                if response:
+                                    client.sendall(response)
+                                    self._line(reader)
+                                else:
+                                    client.shutdown(socket.SHUT_WR)
+                                    reader.read()
+                        pending = store.b2f_lab_outbox("TEST1")
+                        self.assertEqual(bool(pending), response != b"FF\r")
+                    finally:
+                        server.shutdown()
+                        thread.join()
+
+    def test_wire_duplicate_is_rejected_without_receiving_body(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteStore(Path(directory) / "lab.sqlite")
+            store.initialize()
+            store.b2f_lab_store("TEST1", "TEST123", b"original", "in")
+            with LabServer(("127.0.0.1", 0), store, "TEST1") as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    with socket.create_connection(server.server_address, timeout=3) as client:
+                        client.settimeout(3)
+                        with client.makefile("rb") as reader:
+                            self._line(reader)
+                            self._line(reader)
+                            proposal = b"FC EM TEST123 100 50 0"
+                            client.sendall(b";FW: TEST1\r[client-1-B2FHM$]\r" + proposal + b"\rF> " + f"{proposal_checksum([proposal]):02X}".encode() + b"\r")
+                            self.assertEqual(self._line(reader), b"FS -")
+                            self.assertEqual(self._line(reader), b"FF")
+                            client.sendall(b"FQ\r")
+                    self.assertEqual(store.b2f_lab_get("TEST1", "TEST123", "in"), b"original")
+                finally:
+                    server.shutdown()
+                    thread.join()
+
     def test_empty_exchange_and_proposal_deferral(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteStore(Path(directory) / "lab.sqlite")

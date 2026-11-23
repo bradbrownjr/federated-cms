@@ -21,3 +21,22 @@ jobs:
         run: python -m pip install -e ".[test]"
       - name: Run offline test suite
         run: python -m unittest discover -v
+
+  kissterm-interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: bradbrownjr/kissterm
+          ref: f3310c71efa8e3e23263ed25745a9c365a9efc74
+          path: reference-kissterm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Federated CMS
+        run: python -m pip install -e .
+      - name: Test real kissterm client offline
+        env:
+          FCMS_KISSTERM_PATH: ${{ github.workspace }}/reference-kissterm
+        run: python -m unittest tests.test_b2f.B2FLabTests.test_kissterm_bidirectional_roundtrip -v

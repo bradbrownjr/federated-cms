@@ -160,7 +160,17 @@ class Session:
                     if not sid or caller != self.account:
                         raise ProtocolError("lab account mismatch")
                     break
-            while self.receive_turn(line):
+            pending_delivery: list[str] = []
+            while True:
+                continuing = self.receive_turn(line)
+                # Only a complete, valid next turn acknowledges a transmitted
+                # message. EOF, malformed lines and invalid proposal blocks
+                # leave it pending so a later session can retry it.
+                for mid in pending_delivery:
+                    self.store.b2f_lab_delivered(self.account, mid)
+                pending_delivery = []
+                if not continuing:
+                    return
                 messages = self.store.b2f_lab_outbox(self.account)
                 if messages:
                     encoded = [(mid, raw, lzhuf.compress(raw)) for mid, raw in messages]
@@ -181,14 +191,10 @@ class Session:
                         elif choice not in b"=LlHh":
                             raise ProtocolError("unsupported response")
                     line = self.read_line()
-                    for mid in accepted:
-                        self.store.b2f_lab_delivered(self.account, mid)
+                    pending_delivery = accepted
                 else:
                     self.send("FF")
                     line = self.read_line()
-                if line == b"FQ":
-                    return
-            self.send("FQ")
         except (EOFError, ConnectionError, TimeoutError):
             pass
         except (ProtocolError, lzhuf.LzhufError, StoreUnavailable, ValueError):

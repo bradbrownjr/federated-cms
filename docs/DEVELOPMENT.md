@@ -52,6 +52,11 @@ FCMS_KISSTERM_PATH=../kissterm PYTHONPATH=src python -m unittest tests.test_b2f 
 The lab store's `b2f_lab_store(account, mid, raw, 'out')` method seeds a
 synthetic outbound B2 message; `'in'` holds messages received from the client.
 Independent Pat validation and secure mailbox authorization remain open.
+On the wire, an already stored MID is rejected before its content is sent;
+the server therefore cannot detect a different body offered under that MID.
+The byte-for-byte collision check applies only when storing a body locally.
+CI exercises the roundtrip against kissterm commit
+`f3310c71efa8e3e23263ed25745a9c365a9efc74`.
 
 The LZHUF codec is copied from kissterm commit `f3310c71efa8e3e23263ed25745a9c365a9efc74`
 (Copyright 2026 Brad Brown Jr, MIT license; see the repository LICENSE), with
