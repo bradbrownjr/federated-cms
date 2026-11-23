@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import sqlite3
+from contextlib import closing
 
 from federated_cms import CMSCore, SQLiteStore
 from federated_cms.core import utc_now, wire_time
@@ -76,7 +77,7 @@ class CoreTests(unittest.TestCase):
                 later = wire_time(utc_now() + timedelta(seconds=30))
                 claimed = core.store.claim_next(now, later)
                 if deadline == "request":
-                    with sqlite3.connect(core.store.path) as con:
+                    with closing(sqlite3.connect(core.store.path)) as con, con:
                         con.execute("UPDATE requests SET expires_at=? WHERE id=?", (now, receipt.request_id))
                     finish_at = now
                 else:
@@ -87,7 +88,7 @@ class CoreTests(unittest.TestCase):
     def test_legacy_processing_rows_without_lease_are_recovered(self):
         core = make_core(self.path)
         receipt = core.submit_weather("FN43", "scope-a")
-        with sqlite3.connect(core.store.path) as con:
+        with closing(sqlite3.connect(core.store.path)) as con, con:
             con.execute("UPDATE requests SET status='processing', processing_lease_until=NULL, processing_lease_token=NULL WHERE id=?", (receipt.request_id,))
         now = wire_time(utc_now())
         claimed = core.store.claim_next(now, wire_time(utc_now() + timedelta(seconds=30)))
