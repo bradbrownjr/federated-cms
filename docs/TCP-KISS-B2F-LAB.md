@@ -179,6 +179,9 @@ The operator saved the downloaded binary and confirmed its SHA-256 hash
 matched the original 256-byte fixture on the client. This is strong integrity
 evidence for that specific download, rather than a comparison of all possible
 attachment types or sizes.
+The operator also provided SHA-256 hashes of the downloaded binary and the
+earlier synthetic text fixtures from the virtual and physical radio trials;
+all three matched their corresponding locally constructed originals.
 The operator later reported that both radios were set to 5 W, with one roof
 antenna and one indoor antenna approximately four feet from the radio-room
 radio; the radios were approximately ten feet apart. Antenna-to-antenna
