@@ -135,6 +135,15 @@ the download pending. The bridge ended with a timeout, but this observation
 does not identify which timer or radio condition caused the failure. Do not
 interpret the longer T2 as an improvement or use it as a new default.
 
+The offline `tests/test_half_duplex_model.py` drives the pinned AX.25 station
+with a scaled four-frame burst while a fake busy modem queues outgoing frames.
+It shows that a short T2 can enqueue several progressively newer RRs during a
+burst, while a longer T2 reduces that case to the final poll response. It also
+shows that repeated incoming polls queue repeated final responses even with a
+long T2. This is a deterministic model of queueing, not a simulation of
+Express timers, actual modem carrier detection, RF loss or their interaction;
+it cannot establish the root cause of the physical trial or validate a fix.
+
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
 Run it on the client computer on a private loopback connection only; never
