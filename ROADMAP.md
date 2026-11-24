@@ -21,17 +21,27 @@ Milestone exit gates remain open until demonstrated. Checked items denote comple
 - [x] Inspect the Linux RMS Gateway transport, configuration and dependencies. Exercise the pinned gateway with kissterm and Pat, the test-only SGL adapter, and a persistent B2F mailbox on isolated loopback. [Gateway findings](docs/RMS-GATEWAY-FINDINGS.md).
 - [x] Test independent B2F endpoint with Pat in an isolated lab (synthetic messages via test-only localhost Telnet shim; authentication remains open).
 - [ ] Determine whether unmodified RMS software can use a self-hosted CMS; record blockers and alternatives.
-- [ ] Map Winlink email-based information requests into a generic service-request adapter.
+- [ ] Document Winlink Query Catalog population, update and inquiry behavior from primary/public evidence, then map supported message formats into an opt-in local service-request adapter. Distinguish FCMS inquiry syntax from Winlink wire formats ([catalog RFC](docs/SERVICE-CATALOG-RFC.md)).
 **Exit:** documented compatibility matrix and go/no-go recommendation for preserving existing clients and gateways. See [research plan](docs/WINLINK-INTEROPERABILITY.md).
 
 ## M1 — Three-node information-request simulation
 - [x] Prototype one shared localhost terminal session handler with both Linux inetd/stdio and Windows self-listening TCP launch modes; queue a weather request and return an authorized result or status ([BPQ interface RFC](docs/BPQ-LOCAL-INTERFACE.md)); retain separate binary B2F endpoint.
 - [ ] Independently configured nodes with persistent local queues and no mandatory coordinator.
+- [ ] A configured synthetic weather provider publishes a validated local service manifest and remains discoverable after restart ([catalog draft](docs/SERVICE-CATALOG-RFC.md), [schema](schema/service-manifest-v0.1.schema.json)).
 - [ ] Client requests weather or RSS from a node lacking Internet.
 - [ ] Discover a reachable node with Internet egress or cached content.
 - [ ] Return response asynchronously with source, timestamp and freshness.
 - [ ] Bound response size and measure RF-equivalent bytes.
 **Exit:** reproducible demo and automated tests.
+
+## M1.5 — Federated service catalog and offline discovery (proposed)
+
+- [x] Draft a provider-published service manifest, offline synchronization/trust boundaries, inquiry interface mapping, and synthetic fixture ([catalog RFC](docs/SERVICE-CATALOG-RFC.md), [schema](schema/service-manifest-v0.1.schema.json), [example](examples/service-weather-manifest-v0.1.json)). This is **documentation only**, not an implemented catalog.
+- [ ] Implement SQLite-backed local manifest registry, strict validation, revision and withdrawal tombstones, approvals, expiration and paginated listings.
+- [ ] Expose operator-approved synthetic weather, one reviewed `bpq-apps` handler, and one reviewed `rns-apps` handler via restricted provider adapters.
+- [ ] Sync bounded snapshots and deltas across three configured peers; prove replay, collision, withdrawal, restart, partition, stale-catalog and untrusted-advertisement behavior.
+- [ ] Resolve a typed service request to a trusted eligible provider or cache; queue during outage, label stale results and measure discovery bytes plus RF-equivalent costs.
+**Exit:** three nodes publish/reconcile approved catalog records without a mandatory central directory; all acceptance tests are reproducible. BPQ/RNS user-facing discovery is covered under M3; email inquiry ingress remains under M4.
 
 ## M2 — Partition and recovery
 - [ ] Inject Internet outages, peer-link loss, and process restarts.
@@ -43,12 +53,14 @@ Milestone exit gates remain open until demonstrated. Checked items denote comple
 - [ ] Validate Linux LinBPQ and Windows BPQ32 node-command and dedicated application-SSID routes; confirm callsign-first-line behavior, bridge concurrency and private-mail authorization ([BPQ interface RFC](docs/BPQ-LOCAL-INTERFACE.md)).
 - [ ] BPQ terminal: submit requests, check status, retrieve results.
 - [ ] NomadNet/RNS: equivalent requests through existing page interfaces.
+- [ ] Present the local/peer catalog consistently in BPQ `SERVICES`/`SERVICE` commands and RNS/NomadNet pages; preserve provider identity, reachability and stale markers ([catalog RFC](docs/SERVICE-CATALOG-RFC.md)).
 - [ ] Share service definitions for weather, RSS, Gopher, text web and bulletins.
 - [ ] Reuse caches with explicit freshness and provenance.
 **Exit:** identical request works through both client environments.
 
 ## M4 — Federated messaging and Internet mail
 - [ ] Durable mailboxes, operator identity, delegated mailbox providers.
+- [ ] Prototype an opt-in, isolated FCMS email/B2F inquiry address: parse bounded catalog/query messages, validate ingress permissions, persist requests, return correlated asynchronous replies; test synthetic mail before any Winlink Express compatibility claim ([catalog RFC](docs/SERVICE-CATALOG-RFC.md)).
 - [ ] SMTP ingress and egress via authorized gateways.
 - [ ] Idempotent at-least-once forwarding and explicit delivery states.
 - [ ] Evaluate a Winlink-compatible adapter without depending on Winlink production infrastructure.
