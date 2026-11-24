@@ -37,10 +37,12 @@ Can an existing Winlink-compatible client exchange B2F messages with an independ
 - Classify each dependency: documented/open, reproducible, configurable, closed, or unknown.
 - Determine whether existing gateways can target an independent CMS without modifying software.
 
-### W3: Information request handling
-- Document existing Winlink email request patterns for weather and web content.
-- Identify how request/response messages are dispatched and formatted.
-- Prototype a B2 message-to-service-request bridge reusing bpq-apps/rns-apps.
+### W3: Information request and Query Catalog handling
+- Independently verify publicly documented Winlink Query Catalog discovery/update/inquiry formats and how client-side catalog entries are provisioned. Distinguish direct client API updates from RF/message requests; do not infer private CMS implementation details.
+- Document existing Winlink email request patterns for weather and web content; identify how request/response messages are dispatched and formatted.
+- Draft a **distinct FCMS** operator-approved provider catalog, snapshots/deltas and asynchronous email inquiry interface ([service catalog RFC](SERVICE-CATALOG-RFC.md)). Its proposed `CATALOG` and `QUERY` commands are **not claimed to be Winlink protocol commands**.
+- Prototype a local, opt-in B2 message-to-service-request bridge reusing reviewed bpq-apps/rns-apps providers, with separate mailbox authorization and no production Winlink traffic.
+- Test whether an unmodified Winlink Express Query Catalog UI can be directed to an independent catalog; leave compatibility explicitly **unverified** until demonstrated.
 
 ### W4: Decision gate
 - **Path A:** unmodified client and gateway supported, if independently demonstrated.
