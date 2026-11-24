@@ -31,6 +31,7 @@ CMS is used here descriptively for **Common Message Server**; this project is in
 - [Scope and interoperability charter](docs/SCOPE.md)
 - [Architecture RFC 0001](docs/ARCHITECTURE-RFC-0001.md)
 - [B2F interoperability investigation](docs/WINLINK-INTEROPERABILITY.md)
+- [Packet radio troubleshooting](docs/PACKET-TROUBLESHOOTING.md)
 - [kissterm interoperability findings](docs/KISSTERM-B2F-FINDINGS.md)
 - [M0 application integration inventory](docs/M0-APPLICATION-INVENTORY.md)
 - [BPQ cross-platform Telnet/SSID CMS interface (draft)](docs/BPQ-LOCAL-INTERFACE.md)

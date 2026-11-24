@@ -157,6 +157,8 @@ this API, while its binary-clean listener remains separate from BPQ terminal I/O
 For an explicitly operator-controlled experiment with TCP KISS and synthetic
 lab mail, see [TCP-KISS-B2F-LAB.md](TCP-KISS-B2F-LAB.md). This does not make
 the B2F laboratory or its legacy authentication production-ready.
+For packet retry and ACKMODE comparisons, see
+[PACKET-TROUBLESHOOTING.md](PACKET-TROUBLESHOOTING.md).
 
 An apparent BPQ callsign is recorded only as session display context. A random
 session scope limits `JOBS` to work created within that session; a new

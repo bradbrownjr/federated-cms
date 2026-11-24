@@ -170,6 +170,12 @@ the uploaded message and both attachments, and the download was no longer
 pending. This favorable result supports further ACKMODE testing but is a
 single comparison with uncontrolled radio conditions, not a proven cause or
 general throughput guarantee.
+The operator later reported that both radios were set to 5 W, with one roof
+antenna and one indoor antenna approximately four feet from the radio-room
+radio; the radios were approximately ten feet apart. Antenna-to-antenna
+separation and received signal levels were not measured. Receiver overload is
+a possible contributor, not an established cause. See
+[packet troubleshooting](PACKET-TROUBLESHOOTING.md) for controlled comparisons.
 
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
