@@ -2,6 +2,7 @@
 """Check ax25d's connected stdin/stdout before executing the real gateway."""
 import ctypes
 import os
+import signal
 import socket
 import sys
 
@@ -27,4 +28,7 @@ assert address.raw[8] & 0x1e == 0
 assert sys.argv[1:] == ['-P', 'radio', 'N0CALL'], sys.argv
 print('DISPATCH connected AF_AX25/SOCK_SEQPACKET radio N0CALL', file=sys.stderr, flush=True)
 radio.detach()
+# CPython ignores SIGPIPE on startup. ax25d launches native services with
+# the default disposition, which this descriptor-check wrapper must preserve.
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 os.execv('/lab/rmsgw-lab', ['rmsgw-lab', *sys.argv[1:]])

@@ -135,6 +135,9 @@ guest runtime. This is a reproducible functional experiment with timestamps,
 challenges and message IDs generated at run time. The host namespaces do
 not sandbox the host filesystem. Each boot exercises one caller, one session
 and one exchange or rejection. The host log records frame categories and
-fixture shutdown. Gateway process exit status and signal counts require a
-separate traced run. See the [full rmsgw harness](../rmsgw_full/README.md)
+fixture shutdown. CPython ignores SIGPIPE at interpreter startup, so the
+descriptor-check wrapper restores SIG_DFL immediately before executing
+rmsgw. The gateway can terminate on SIGPIPE during sign-off. A passing
+exchange verifies the mailbox, link release and listener shutdown. Measuring
+the individual gateway process exit status requires a separate traced run. See the [full rmsgw harness](../rmsgw_full/README.md)
 for the gateway build shims and licence information.
