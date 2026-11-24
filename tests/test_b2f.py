@@ -57,6 +57,32 @@ class B2FLabTests(unittest.TestCase):
                         server.shutdown()
                         thread.join()
 
+    def test_client_refusal_without_handshake_keeps_mail_pending(self):
+        # A Packet Winlink client may reject an unfamiliar server before
+        # sending its SID or challenge response. This is not authentication.
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteStore(Path(directory) / 'lab.sqlite')
+            store.initialize()
+            raw = b'Mid: TEST123\r\nBody: 0\r\n\r\n'
+            mailbox_call(store, 'TEST1', 'store_message', 'TEST123', raw, 'out')
+            with LabServer(('127.0.0.1', 0), store, 'TEST1', self.PASSWORD) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    with socket.create_connection(server.server_address, timeout=3) as client:
+                        client.settimeout(3)
+                        with client.makefile('rb') as reader:
+                            self._line(reader)
+                            self._line(reader)
+                            self._line(reader)
+                            client.sendall(b'Winlink session connected to Peer-to-Peer station\r')
+                            self.assertEqual(self._line(reader), b'*** Protocol error')
+                    self.assertEqual(mailbox_call(store, 'TEST1', 'pending'), [('TEST123', raw)])
+                    self.assertEqual(mailbox_call(store, 'TEST1', 'list_incoming'), [])
+                finally:
+                    server.shutdown()
+                    thread.join()
+
     def test_missing_response_and_old_challenge_response_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteStore(Path(directory) / "lab.sqlite")

@@ -42,6 +42,17 @@ state machine and the real B2F lab, entirely on localhost. It checks a
 bidirectional message and attachment exchange and reopened SQLite state. It
 does not validate a particular physical modem or radio.
 
+In one operator-initiated physical-radio trial, Winlink Express in Packet
+Winlink mode established a direct AX.25 connection to the lab. After receiving
+the lab's `FCMS` SID and challenge, Express classified the endpoint as a
+peer-to-peer station and disconnected without sending a B2F handshake. The
+server's synthetic message remained pending. This demonstrates the radio and
+link path, not Express B2F compatibility. The reason for Express's endpoint
+classification is not yet established; do not infer that the password was
+wrong or change the SID to claim another service's identity based on this one
+observation. The corresponding offline regression verifies that an
+unauthenticated client refusal cannot retrieve the pending message.
+
 ## Operator-controlled use
 
 Before any operation that could key a transmitter, establish the actual
