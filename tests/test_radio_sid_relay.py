@@ -1,10 +1,18 @@
 import asyncio
 import unittest
 
-from tests.radio_sid_relay import handle, ORIGINAL, SID
+from tests.radio_sid_relay import handle, run, ORIGINAL, SID
 
 
 class RadioRelayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unavailable_mailbox_fails_before_relay_is_armed(self):
+        import socket
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1', 0))
+            missing_port = reservation.getsockname()[1]
+        with self.assertRaises(OSError):
+            await run(0, missing_port, 1)
+
     async def test_only_sid_changes_and_binary_data_passes(self):
         payload = bytes(range(256))
         received = asyncio.get_running_loop().create_future()

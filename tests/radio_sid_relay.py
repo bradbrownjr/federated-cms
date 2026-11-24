@@ -36,17 +36,29 @@ async def handle(reader, writer, target_port):
 
 
 async def run(port, target_port, seconds):
+    # Fail before arming the radio if the loopback mailbox is already down.
+    # The probe reads only the public SID and never attempts authentication.
+    reader, writer = await asyncio.wait_for(asyncio.open_connection('127.0.0.1', target_port, limit=512), 5)
+    try:
+        if await asyncio.wait_for(reader.readuntil(b'\r'), 5) != ORIGINAL:
+            raise ValueError('unexpected lab SID')
+    finally:
+        writer.close()
+        await writer.wait_closed()
     done = asyncio.Event()
     accepted = False
+    failure = None
 
     async def accept(reader, writer):
-        nonlocal accepted
+        nonlocal accepted, failure
         if accepted:
             writer.close()
             return
         accepted = True
         try:
             await handle(reader, writer, target_port)
+        except (OSError, TimeoutError, ValueError, asyncio.IncompleteReadError) as exc:
+            failure = type(exc).__name__
         finally:
             done.set()
 
@@ -54,6 +66,8 @@ async def run(port, target_port, seconds):
     try:
         print(f'Loopback SID relay ready on port {port} for one session.', flush=True)
         await asyncio.wait_for(done.wait(), seconds)
+        if failure:
+            raise ConnectionError(failure)
     finally:
         server.close()
         await server.wait_closed()
