@@ -78,6 +78,9 @@ slow transfers may time out and need separate testing. Stop and inspect the
 logs and mailbox after a test; a disconnect alone does not prove delivery.
 Each accepted outbound frame is logged to stdout with UTC time, KISS channel,
 frame type and byte count, without message content or challenge responses.
+Received frames addressed to the lab station are logged with source, channel,
+type and whether the configured direct-peer filter accepted them; payloads are
+not logged.
 Retaining that output is the operator's choice; these counts do not measure
 actual RF airtime or establish that the frame was transmitted over the air.
 

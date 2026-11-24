@@ -1,5 +1,7 @@
 """Offline TCP KISS, real AX.25 and B2F laboratory integration."""
 import asyncio
+from contextlib import redirect_stdout
+import io
 from pathlib import Path
 import os
 import sys
@@ -73,11 +75,14 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
         transport.subscribe(lambda frame, port: received.append(frame))
         frame = lambda path: AX25Frame.u_frame(path, UType.SABM, pf=True)
         valid = frame(AX25Path(station, peer))
-        await transport.dispatch(valid, 0)
-        await transport.dispatch(valid, 1)
-        await transport.dispatch(frame(AX25Path(station, AX25Address.parse('K1BAD'))), 0)
-        await transport.dispatch(frame(AX25Path(station, peer, (AX25Address.parse('DIGI'),))), 0)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            await transport.dispatch(valid, 0)
+            await transport.dispatch(valid, 1)
+            await transport.dispatch(frame(AX25Path(station, AX25Address.parse('K1BAD'))), 0)
+            await transport.dispatch(frame(AX25Path(station, peer, (AX25Address.parse('DIGI'),))), 0)
         self.assertEqual(received, [valid])
+        self.assertIn('source=K1BAD kind=SABM direct=True accepted=False', output.getvalue())
 
     async def test_programmatic_start_requires_transmit_authorization(self):
         with patch('federated_cms.kiss_lab.ScopedKiss') as transport:

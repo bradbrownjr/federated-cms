@@ -53,9 +53,14 @@ class ScopedKiss(TcpKissTransport):
 
     async def dispatch(self, frame, port=0):
         source, dest = frame.path.source, frame.path.destination
-        if (port == self.kiss_port and not frame.path.repeaters
-                and (source.callsign, source.ssid) == (self.peer.callsign, self.peer.ssid)
-                and (dest.callsign, dest.ssid) == (self.station.callsign, self.station.ssid)):
+        addressed = (dest.callsign, dest.ssid) == (self.station.callsign, self.station.ssid)
+        allowed = (addressed and port == self.kiss_port and not frame.path.repeaters
+                   and (source.callsign, source.ssid) == (self.peer.callsign, self.peer.ssid))
+        if addressed:
+            kind = frame.utype.name if frame.kind == 'U' and frame.utype is not None else frame.kind
+            print(f'RX port={port} source={source} kind={kind} direct={not frame.path.repeaters} '
+                  f'accepted={allowed}', flush=True)
+        if allowed:
             await super().dispatch(frame, port)
 
 
