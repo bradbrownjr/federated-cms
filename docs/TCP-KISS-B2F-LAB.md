@@ -84,8 +84,11 @@ virtual KISS network and the experimental `W` SID proxy to connect to the
 password-protected lab. Express received a synthetic message, displayed it in
 the inbox and disconnected; the reopened lab database had no pending outgoing
 messages. This demonstrates a lab download and authentication in this setup,
-not an upload, a radio exchange with the modified SID, or production Winlink
-compatibility. No authentication challenges or responses are recorded here.
+and a subsequent session uploaded a synthetic message. Express reported a
+successful send, and a newly opened database connection confirmed the message
+in the lab inbox. These sessions do not demonstrate a radio exchange with the
+modified SID or production Winlink compatibility. No authentication challenges
+or responses are recorded here.
 
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
