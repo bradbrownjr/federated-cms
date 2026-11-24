@@ -17,7 +17,8 @@ from tests.lab_mailbox_helpers import mailbox_call
 KISSTERM = os.environ.get('FCMS_KISSTERM_PATH')
 if KISSTERM:
     sys.path.insert(0, KISSTERM)
-    from federated_cms.kiss_lab import MAX_BYTES, LabGate, ScopedKiss, bridge, main, run_lab
+    from federated_cms.kiss_lab import (MAX_BYTES, LabGate, ScopedKiss, bridge,
+                                       check_kiss_connection, main, run_lab)
     from kissterm.ax25.address import AX25Address, AX25Path
     from kissterm.ax25.station import AX25Station
     from kissterm.ax25.frame import AX25Frame, UType
@@ -56,6 +57,14 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
                     main()
                 run.assert_not_called()
 
+    def test_check_only_rejects_transmit_flag(self):
+        argv = ['kiss_lab', '--kiss-host', '127.0.0.1', '--kiss-port', '1234',
+                '--station', 'N0LAB-10', '--peer', 'N0CALL', '--check-only', '--enable-tx']
+        with patch.object(sys, 'argv', argv), patch('federated_cms.kiss_lab.run_lab') as run:
+            with self.assertRaises(SystemExit):
+                main()
+            run.assert_not_called()
+
     async def test_filters_other_sources_channels_and_digipeaters(self):
         station, peer = AX25Address.parse('N0LAB-10'), AX25Address.parse('N0CALL')
         transport = ScopedKiss('127.0.0.1', 1, 0, station, peer)
@@ -74,6 +83,24 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, 'transmit authorization'):
                 await run_lab(SimpleNamespace(enable_tx=False))
             transport.assert_not_called()
+
+    async def test_check_only_sends_no_bytes(self):
+        received = asyncio.get_running_loop().create_future()
+
+        async def accept(reader, writer):
+            try:
+                received.set_result(await reader.read())
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(accept, '127.0.0.1', 0)
+        try:
+            await check_kiss_connection('127.0.0.1', server.sockets[0].getsockname()[1])
+            self.assertEqual(await asyncio.wait_for(received, 3), b'')
+        finally:
+            server.close()
+            await server.wait_closed()
 
     async def test_modem_disconnect_stops_instead_of_rearming(self):
         accepted = 0

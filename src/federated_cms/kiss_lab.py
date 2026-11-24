@@ -197,6 +197,13 @@ async def run_lab(args):
         await transport.close()
 
 
+async def check_kiss_connection(host: str, port: int):
+    """Check TCP reachability without opening a transmit-capable transport."""
+    _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), 5)
+    writer.close()
+    await writer.wait_closed()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--kiss-host', required=True, help='operator-provided TCP KISS host')
@@ -207,9 +214,12 @@ def main():
     parser.add_argument('--b2f-port', type=int, default=63191)
     parser.add_argument('--seconds', type=int, default=300)
     parser.add_argument('--max-frames', type=int, default=500)
+    parser.add_argument('--check-only', action='store_true', help='connect and close without sending data')
     parser.add_argument('--enable-tx', action='store_true', help='explicitly enable lab transmission')
     args = parser.parse_args()
-    if not args.enable_tx:
+    if args.check_only and args.enable_tx:
+        parser.error('--check-only cannot be combined with --enable-tx')
+    if not args.check_only and not args.enable_tx:
         parser.error('the lab requires explicit --enable-tx; no connection was opened')
     if not (1 <= args.kiss_port <= 65535 and 1 <= args.b2f_port <= 65535
             and 0 <= args.channel <= 15 and 1 <= args.seconds <= 3600
@@ -221,6 +231,10 @@ def main():
             parser.error('station and peer must have distinct AX.25 addresses')
     except ValueError as exc:
         parser.error(str(exc))
+    if args.check_only:
+        asyncio.run(check_kiss_connection(args.kiss_host, args.kiss_port))
+        print('TCP KISS endpoint reachable; no data sent.', flush=True)
+        return
     try:
         asyncio.run(run_lab(args))
     except KeyboardInterrupt:

@@ -37,16 +37,23 @@ does not validate a particular physical modem or radio.
 
 Before any operation that could key a transmitter, establish the actual
 hardware configuration and operator authorization. The bridge opens its
-transmit gate only when explicitly started with `--enable-tx`; without that
-flag it exits before opening the KISS connection. It stops after one session,
+transmit gate only when explicitly started with `--enable-tx`. Without that
+flag it exits before opening the KISS connection unless `--check-only` is
+selected, which sends no data. It stops after one session,
 on modem connection loss, or when its frame or wall-time limit is reached.
 Ctrl-C closes its gate and stops the bridge. These software limits do not
 replace station control, identification, or a physical emergency stop.
 
 Set `PYTHONPATH` to include both this repository's `src` directory and the
 trusted kissterm checkout (use `;` rather than `:` on Windows). Start the B2F
-server separately as described in [DEVELOPMENT.md](DEVELOPMENT.md), then,
-only for an authorized test, run the following with the placeholders replaced:
+server separately as described in [DEVELOPMENT.md](DEVELOPMENT.md). To check
+the modem TCP connection without sending data or arming transmit, run:
+
+```text
+python -m federated_cms.kiss_lab --kiss-host MODEM_HOST --kiss-port MODEM_PORT --station STATION_CALL --peer CLIENT_CALL --check-only
+```
+
+For an authorized test, run the following with the placeholders replaced:
 
 ```text
 python -m federated_cms.kiss_lab --kiss-host MODEM_HOST --kiss-port MODEM_PORT --station STATION_CALL --peer CLIENT_CALL --b2f-port 63191 --enable-tx
