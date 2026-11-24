@@ -55,6 +55,10 @@ def message_mid(raw: bytes) -> str:
             if content[pos:pos + 2] != b"\r\n":
                 raise B2MessageError("missing B2 section separator")
             pos += 2
-    if content[pos:] not in (b"", b"\r\n"):
+    # Express 1.8.0.0 has been observed ending an attachment message with
+    # the specified final CRLF followed by one NUL. Preserve it as received;
+    # do not accept general trailing content or add a NUL to other messages.
+    endings = (b"", b"\r\n", b"\r\n\x00") if len(lengths) > 1 else (b"", b"\r\n")
+    if content[pos:] not in endings:
         raise B2MessageError("unexpected B2 trailing data")
     return mids[0]
