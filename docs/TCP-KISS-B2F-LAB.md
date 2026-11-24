@@ -70,6 +70,15 @@ and setup; it does not establish full protocol interoperability or define the
 complete semantics of that feature. These comparisons used a probe without a
 challenge, authentication, mailbox or radio.
 
+For further controlled testing, `tests.virtual_kiss_sid` can connect its
+virtual KISS network to a loopback B2F lab endpoint with `--b2f-port`. Its
+test-only proxy substitutes the selected SID and relays the remaining bytes
+unchanged. The proxy is an experiment, not evidence that all features in a
+selected SID are implemented. Bind its virtual KISS listener to loopback by
+default; a LAN bind must be selected explicitly for an operator's client.
+Use a separate lab mailbox and synthetic messages. The KISS network does not
+connect to a physical modem.
+
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
 Run it on the client computer on a private loopback connection only; never

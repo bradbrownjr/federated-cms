@@ -32,6 +32,54 @@ if KISSTERM:
 
 @unittest.skipUnless(KISSTERM, 'set FCMS_KISSTERM_PATH for the optional KISS test')
 class KissLabTests(unittest.IsolatedAsyncioTestCase):
+    async def test_virtual_kiss_relay_authenticates_and_delivers(self):
+        from tests.virtual_kiss_sid import run
+        import socket
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteStore(Path(directory) / 'lab.sqlite')
+            store.initialize()
+            download = build(mid='VIRTUALTEST', sender='LAB', to=['N0CALL'],
+                             subject='Test', body='Synthetic message')
+            mailbox_call(store, 'N0CALL', 'store_message', download.mid, serialize(download), 'out')
+            b2f = LabServer(('127.0.0.1', 0), store, 'N0CALL', 'fixture-only')
+            worker = threading.Thread(target=b2f.serve_forever, daemon=True)
+            worker.start()
+            with socket.socket() as reservation:
+                reservation.bind(('127.0.0.1', 0))
+                port = reservation.getsockname()[1]
+            lab = asyncio.create_task(run('127.0.0.1', port, '[FCMS-0.1-B2FWHM$]',
+                                          'N0LAB-10', 'N0CALL', 20, b2f.server_address[1]))
+            transport = TcpKissTransport('127.0.0.1', port)
+            station = None
+            try:
+                await asyncio.sleep(.2)
+                await transport.open()
+                source = AX25Address.parse('N0CALL')
+                station = AX25Station(source, transport)
+                incoming = asyncio.Queue()
+                station.on_link_created.append(lambda link: link.on_data.append(
+                    lambda _: incoming.put_nowait(link.read_nowait())))
+                link = await station.connect(AX25Path(AX25Address.parse('N0LAB-10'), source), timeout=5)
+                client = Client('N0CALL', 'N0LAB-10', password='fixture-only')
+                while not client.done:
+                    client.feed(await asyncio.wait_for(incoming.get(), 10))
+                    if output := client.take_output():
+                        await link.send(output)
+                await asyncio.wait_for(lab, 10)
+                self.assertFalse(client.error)
+                self.assertEqual([e.raw for e in client.take_events() if isinstance(e, Received)],
+                                 [serialize(download)])
+                self.assertEqual(mailbox_call(store, 'N0CALL', 'pending'), [])
+            finally:
+                lab.cancel()
+                await asyncio.gather(lab, return_exceptions=True)
+                if station:
+                    station.close()
+                await transport.close()
+                b2f.shutdown()
+                worker.join(timeout=5)
+                b2f.server_close()
+
     async def test_virtual_kiss_sid_probe_without_modem_or_mailbox(self):
         from tests.virtual_kiss_sid import run
         import socket
