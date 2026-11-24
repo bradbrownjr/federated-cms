@@ -79,7 +79,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Exercise upstream login routine over local socket pairs
+      - name: Exercise upstream login and experimental teardown patch offline
         env:
           FCMS_RMSGW_SOURCE: ${{ github.workspace }}/reference-rmsgw
-        run: python -m unittest tests.test_rmsgw_login -v
+        run: python -m unittest tests.test_rmsgw_login tests.test_rmsgw_final_notices -v

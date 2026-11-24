@@ -145,3 +145,15 @@ local run each of the three cases terminated the gateway with SIGPIPE even
 though message or rejection checks, AX.25 release and fixture shutdown passed.
 These results do not establish clean gateway shutdown. See the [full rmsgw harness](../rmsgw_full/README.md)
 for the gateway build shims and licence information.
+
+## Experimental final-notice fix
+
+Add `--fixed-final-notices` to apply the repository's experimental patch to
+the private export of the pinned GPL-licensed upstream source. The source
+checkout is not modified. This option requires the monitored gateway to exit
+with status zero in each case; without it the unmodified baseline remains in
+effect. The patch blocks SIGPIPE only during the two optional final notices,
+preserving the previous signal mask and already-pending SIGPIPE. It is a
+research patch for this pinned revision, not a production gateway release.
+The optional `tests.test_rmsgw_final_notices` test exercises both socket and
+pipe disconnects and preservation of a pre-existing pending signal.
