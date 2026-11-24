@@ -40,6 +40,7 @@ Diagram shows **conceptual** access and federation paths, not proven RMS interch
 | **Ingress adapters** | Decode authorized B2F/BPQ/RNS/SMTP operations and map to internal mailbox/service requests | Do not independently choose unrestricted Internet egress |
 | **Mailbox service** | Store B2 messages, enforce mailbox authorization, accept outbound mail for queueing | Not an interactive packet BBS replacement |
 | **Durable message store** | Atomic queue, envelope, attachment metadata, dedup/tombstones, request correlation | Not route discovery |
+| **Service catalog/registry (proposed)** | Store approved provider manifests, revocations, expiry and offline snapshots; feed typed service selection | An unauthenticated catalog entry is not a provider credential or execution grant |
 | **Service dispatcher** | Typed weather, RSS, Gopher and other request handlers via existing app adapters | Not a shell/URL proxy to arbitrary targets |
 | **Federation router** | Choose eligible peers, create hop-transfer records, retry, expire, reconcile after partitions | Not client B2F protocol or public-key identity proof |
 | **Peer directory** | Operator-configured peers initially; later authenticated, expiring capability adverts | Not mandatory centralized naming |
@@ -64,7 +65,7 @@ See [interoperability plan](WINLINK-INTEROPERABILITY.md) and [kissterm evidence]
 
 1. Client submits service request via an available edge adapter to CMS A.
 2. CMS A validates size, format and local authorization; commits a durable record; returns local acceptance status. **Not** an end-to-end delivery receipt.
-3. A may serve a sufficiently fresh (or permitted stale) local cache. Otherwise it discovers an eligible trusted peer/provider.
+3. A may serve a sufficiently fresh (or permitted stale) local cache. Otherwise it selects an eligible trusted peer/provider using operator-approved metadata from the proposed [service catalog](SERVICE-CATALOG-RFC.md). Catalog claims alone do not authorize requests.
 4. Request remains queued if A has no reachable peer; A → B → C transfer occurs when connectivity permits.
 5. C executes an authorized service operation or returns a typed error, with source/fetched timestamp/stale marker.
 6. Response is a separate immutable envelope correlated with the original request ID, queued and forwarded back to A; A makes it retrievable by the initiating client.
@@ -75,6 +76,7 @@ See [interoperability plan](WINLINK-INTEROPERABILITY.md) and [kissterm evidence]
 ## Protocol layering and state
 
 - **Application envelope:** IDs, expiry, requested service, response correlation, origin, budget and provenance. [Draft v0.1](REQUEST-ENVELOPE-v0.1.md).
+- **Service catalog (proposed):** separate versioned provider manifests, local trust decisions, expiration, tombstones and offline peer synchronization; not itself a client B2F session or a federation transport. [Catalog RFC](SERVICE-CATALOG-RFC.md).
 - **Local durable store:** SQLite is a test baseline; restart/power-loss behavior and backups require measurement.
 - **Peer transfer:** initial lab transport uses explicitly configured IP peers; replaceability is mandatory in the design, not a claim of deployed plugins.
 - **Link adapters:** B2F sessions, a BPQ local ASCII terminal bridge (Linux inetd/stdin-stdout or Windows self-listening TCP, both with first-line callsign context), NomadNet pages and future HF paths remain independent. BPQ's ordinary terminal route is not binary-safe.
