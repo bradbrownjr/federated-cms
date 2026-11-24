@@ -157,6 +157,9 @@ def stage(args, build):
         '-tags=libax25', 'CGO_ENABLED=1', 'GOOS=linux', 'GOARCH=amd64'))
     source = build / 'rmsgw'
     gateway.export_revision(args.source.resolve(strict=True), gateway.REVISION, source)
+    if args.fixed_final_notices:
+        subprocess.run(['git', 'apply', '--unidiff-zero', str(REPO / 'tests/fixtures/rmsgw-final-notices.patch')],
+                       cwd=source, env=ENV, check=True, timeout=10)
     gateway.export_revision(args.kissterm_source.resolve(strict=True), gateway.KISSTERM_REVISION,
                             build / 'reference', ('kissterm',))
     # Upstream greet.c embeds __DATE__. Use its pinned Git commit timestamp.
@@ -203,7 +206,7 @@ def stage(args, build):
     return packages
 
 
-def verify_log(case, output):
+def verify_log(case, output, *, require_clean_gateway=False):
     lines = output.splitlines()
     markers = ['Stopped ax25d before KISS port teardown', 'Observed DISC and answering UA',
                f'FCMS AX25 PASS {case}', 'DISPATCH connected AF_AX25/SOCK_SEQPACKET radio N0CALL',
@@ -212,13 +215,14 @@ def verify_log(case, output):
     if (not all(lines.count(marker) == 1 for marker in markers)
             or sum(line in ('Observed gateway exit status 0', 'Observed gateway exit status -13')
                    for line in lines) != 1
+            or (require_clean_gateway and lines.count('Observed gateway exit status 0') != 1)
             or not any(line.startswith(CASES[case]) for line in lines)
             or any(error in output for error in ('FCMS AX25 FAIL', 'Traceback (most recent call last)',
                                                  'Exception in thread', 'accept error', 'Kernel panic'))):
         raise RuntimeError(f'{case} did not complete the guest assertions')
 
 
-def boot(case, packages, build, log):
+def boot(case, packages, build, log, *, require_clean_gateway=False):
     command = [
         'unshare', '--user', '--map-root-user', '--net', '--ipc', '--fork', '--kill-child',
         'env', f'LD_LIBRARY_PATH={packages}/usr/lib/{TRIPLET}',
@@ -263,7 +267,7 @@ def boot(case, packages, build, log):
         finally:
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
-    verify_log(case, log.read_text(errors='replace'))
+    verify_log(case, log.read_text(errors='replace'), require_clean_gateway=require_clean_gateway)
 
 
 def terminate(signum, _frame):
@@ -276,6 +280,8 @@ def main():
     for flag in ('source', 'kissterm-source', 'pat-binary', 'packages'):
         parser.add_argument('--' + flag, required=True, type=Path)
     parser.add_argument('--case', choices=CASES, help='run one case (default: all three)')
+    parser.add_argument('--fixed-final-notices', action='store_true',
+                        help='apply the experimental gateway teardown patch to the private source export')
     parser.add_argument('--log-dir', type=Path, help='new directory to retain guest console logs')
     args = parser.parse_args()
     if sys.platform != 'linux' or os.geteuid() == 0:
@@ -292,7 +298,7 @@ def main():
             print(f'Booting {case}', flush=True)
             log = logs / (case + '.log')
             try:
-                boot(case, packages, build, log)
+                boot(case, packages, build, log, require_clean_gateway=args.fixed_final_notices)
             except Exception:
                 if log.is_file():
                     print(log.read_text(errors='replace')[-8000:], file=sys.stderr)
