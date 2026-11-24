@@ -21,6 +21,8 @@ modem; use a trusted network and protect that access separately.
   outbound buffer for bounded flow control. Other versions are unverified.
 * A TCP KISS endpoint and its host, port and KISS channel, plus the exact
   station and peer callsigns/SSIDs. Direct paths only; no digipeaters.
+  Do not run another AX.25 station with the same callsign/SSID on that modem;
+  simultaneous TCP-client behavior depends on the modem.
 * A separately running loopback-only Federated CMS B2F lab server with a
   dedicated database and disposable password. Its configured lab account
   must match the client B2F account. The AX.25 peer callsign is separately
@@ -62,6 +64,33 @@ Each accepted outbound frame is logged to stdout with UTC time, KISS channel,
 frame type and byte count, without message content or challenge responses.
 Retaining that output is the operator's choice; these counts do not measure
 actual RF airtime or establish that the frame was transmitted over the air.
+
+For a small synthetic download, seed the dedicated database while no B2F lab
+session is active. The example uses `LAB_ACCOUNT` and `LAB_DATABASE` from
+the operator's environment and the same Python environment as the bridge:
+
+```python
+import os, secrets
+from federated_cms import CMSCore, SQLiteStore
+from kissterm.winlink.message import build, serialize
+
+account = os.environ['LAB_ACCOUNT'].upper()
+service = CMSCore(SQLiteStore(os.environ['LAB_DATABASE'])).lab_mailbox()
+message = build(mid=secrets.token_hex(6).upper(), sender=account, to=[account],
+                subject='Federated CMS lab', body='Synthetic test message.')
+session = service.open_session(account)
+try:
+    service.store_message(session, message.mid, serialize(message), 'out')
+    print('Queued synthetic test message:', message.mid)
+finally:
+    service.close_session(session)
+```
+
+After the session has ended, `service.list_incoming(session)` and
+`service.pending(session)` report the lab's inbound and pending outbound
+messages inside a new trusted session. Close that session afterward. Check the
+client's received and sent records as well as the server database; a local
+gateway acceptance is not a delivery receipt from another human recipient.
 
 This path does not exercise RMS gateway SGL or a remote LinBPQ installation.
 See the [interoperability research plan](WINLINK-INTEROPERABILITY.md) for the
