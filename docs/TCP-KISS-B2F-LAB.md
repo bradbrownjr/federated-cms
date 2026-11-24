@@ -32,6 +32,9 @@ verify that the test setup is isolated from real account updates. See Winlink's
   station and peer callsigns/SSIDs. Direct paths only; no digipeaters.
   Do not run another AX.25 station with the same callsign/SSID on that modem;
   simultaneous TCP-client behavior depends on the modem.
+  The one-session bridge stops if an accepted AX.25 link is re-established;
+  a repeated setup after a lost UA also requires rearming. This prevents a
+  new link from inheriting an existing authenticated mailbox stream.
 * A separately running loopback-only Federated CMS B2F lab server with a
   dedicated database and disposable password. Its configured lab account
   must match the client B2F account. The AX.25 peer callsign is separately

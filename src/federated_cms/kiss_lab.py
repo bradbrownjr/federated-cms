@@ -14,9 +14,10 @@ import sys
 import time
 
 from kissterm.ax25.address import AX25Address
+from kissterm.ax25.frame import UType
 from kissterm.ax25.session import LinkParams
 from kissterm.ax25.station import AX25Station
-from kissterm.transport.base import SessionState, TransportState
+from kissterm.transport.base import SessionState, TransportError, TransportState
 from kissterm.transport.tcp_kiss import TcpKissTransport
 from kissterm.tx import TransmitGate
 
@@ -52,12 +53,37 @@ class ScopedKiss(TcpKissTransport):
     def __init__(self, host, tcp_port, kiss_port, station, peer):
         super().__init__(host, tcp_port, ports=kiss_port + 1)
         self.kiss_port, self.station, self.peer = kiss_port, station, peer
+        self.cancel_active_bridge = None
+        self.link_reset = False
+
+    def _session_allows(self, frame):
+        """Stop on a second setup from either station, before accepting or sending it.
+
+        A lost-UA retry and a peer restart can have identical setup frames.
+        Both require rearming so the new link cannot inherit the mailbox stream.
+        """
+        if (not self.link_reset and self.cancel_active_bridge is not None
+                and frame.utype in (UType.SABM, UType.SABME)):
+            self.link_reset = True
+            self.gate.set(False)
+            self.cancel_active_bridge()
+        return not self.link_reset
+
+    async def send_frame(self, frame, port=0):
+        # The AX.25 station may initiate re-establishment on FRMR or an
+        # unexpected UA. Stop before its setup frame reaches the transport.
+        if self._session_allows(frame):
+            await super().send_frame(frame, port)
 
     async def dispatch(self, frame, port=0):
         source, dest = frame.path.source, frame.path.destination
         addressed = (dest.callsign, dest.ssid) == (self.station.callsign, self.station.ssid)
+        # kissterm delivers connectionless UI payloads on an existing link
+        # through the same callback as sequenced data. B2F needs only the latter.
         allowed = (addressed and port == self.kiss_port and not frame.path.repeaters
-                   and (source.callsign, source.ssid) == (self.peer.callsign, self.peer.ssid))
+                   and frame.utype is not UType.UI
+                   and (source.callsign, source.ssid) == (self.peer.callsign, self.peer.ssid)
+                   and self._session_allows(frame))
         if addressed:
             kind = frame.utype.name if frame.kind == 'U' and frame.utype is not None else frame.kind
             print(f'RX port={port} source={source} kind={kind} direct={not frame.path.repeaters} '
@@ -190,24 +216,28 @@ async def run_lab(args):
             nonlocal task
             if task is None:
                 task = asyncio.create_task(bridge(link, args.b2f_port, finished))
+                transport.cancel_active_bridge = task.cancel
 
         station.on_incoming.append(accepted)
         gate.set(True)
         print('Lab transmit enabled; waiting for one direct session. Ctrl-C stops it.', flush=True)
         deadline = time.monotonic() + args.seconds
-        while not finished.is_set():
+        while not finished.is_set() and not transport.link_reset:
             if transport.state is not TransportState.OPEN:
                 raise ConnectionError('KISS connection lost; transmit disabled')
             if not gate.enabled or gate.remaining <= 0 or time.monotonic() >= deadline:
                 raise TimeoutError('lab transmit limit reached')
             await asyncio.sleep(.1)
+        if transport.link_reset:
+            raise ConnectionError('AX.25 link reset; rearm for a new session')
         if task is not None:
             await task
             print('B2F lab session finished; disabling transmit.', flush=True)
     finally:
         gate.set(False)  # shutdown never transmits a delayed frame
-        if task is not None and not task.done():
-            task.cancel()
+        if task is not None:
+            if not task.done():
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         if station is not None:
             station.close()
@@ -257,7 +287,7 @@ def main():
         asyncio.run(run_lab(args))
     except KeyboardInterrupt:
         return 130
-    except (OSError, TimeoutError, ValueError) as exc:
+    except (OSError, TransportError, ValueError) as exc:
         print(f'Lab stopped: {exc}', file=sys.stderr, flush=True)
         return 1
     return 0

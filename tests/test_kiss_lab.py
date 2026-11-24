@@ -4,12 +4,13 @@ from contextlib import redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
 import os
+import socket
 import sys
 import tempfile
 import threading
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from unittest.mock import patch
 
 from federated_cms.b2f import LabServer
@@ -24,7 +25,7 @@ if KISSTERM:
     from kissterm.ax25.address import AX25Address, AX25Path
     from kissterm.ax25.station import AX25Station
     from kissterm.ax25.frame import AX25Frame, UType
-    from kissterm.transport.base import SessionState
+    from kissterm.transport.base import SessionState, TransportState
     from kissterm.transport.tcp_kiss import TcpKissTransport
     from kissterm.winlink.b2f import Client, Received, Sent
     from kissterm.winlink.message import build, serialize
@@ -167,6 +168,17 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(main(), 1)
         self.assertEqual(output.getvalue().strip(), 'Lab stopped: limit reached')
 
+    def test_unavailable_kiss_endpoint_exits_with_transport_error(self):
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1', 0))
+            port = str(reservation.getsockname()[1])
+            argv = ['kiss_lab', '--kiss-host', '127.0.0.1', '--kiss-port', port,
+                    '--station', 'N0LAB-10', '--peer', 'N0CALL', '--enable-tx']
+            output = io.StringIO()
+            with patch.object(sys, 'argv', argv), redirect_stderr(output):
+                self.assertEqual(main(), 1)
+            self.assertIn(f'Lab stopped: connect to 127.0.0.1:{port} failed', output.getvalue())
+
     async def test_filters_other_sources_channels_and_digipeaters(self):
         station, peer = AX25Address.parse('N0LAB-10'), AX25Address.parse('N0CALL')
         transport = ScopedKiss('127.0.0.1', 1, 0, station, peer)
@@ -182,6 +194,89 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
             await transport.dispatch(frame(AX25Path(station, peer, (AX25Address.parse('DIGI'),))), 0)
         self.assertEqual(received, [valid])
         self.assertIn('source=K1BAD kind=SABM direct=True accepted=False', output.getvalue())
+
+    async def test_connected_stream_only_receives_sequenced_data(self):
+        local, peer = AX25Address.parse('N0LAB-10'), AX25Address.parse('N0CALL')
+        path = AX25Path(local, peer)
+        transport = ScopedKiss('127.0.0.1', 1, 0, local, peer)
+        station = AX25Station(local, transport)
+        received = []
+        station.on_incoming.append(lambda link: link.on_data.append(received.append))
+        try:
+            with patch.object(transport, 'send_frame', new_callable=AsyncMock):
+                await transport.dispatch(AX25Frame.u_frame(path, UType.SABM, pf=True))
+                await transport.dispatch(AX25Frame.u_frame(path, UType.UI, info=b'beacon'))
+                await transport.dispatch(AX25Frame.i_frame(path, 0, 0, b'connected data'))
+            self.assertEqual(received, [b'connected data'])
+        finally:
+            station.close()
+
+    async def test_link_reestablishment_aborts_the_accepted_session(self):
+        local, peer = AX25Address.parse('N0LAB-10'), AX25Address.parse('N0CALL')
+        path = AX25Path(local, peer)
+        for before_data, control in ((True, UType.SABM), (False, UType.SABM), (False, UType.SABME),
+                                     (False, UType.FRMR), (False, UType.UA)):
+            with self.subTest(before_data=before_data, control=control):
+                opened = asyncio.Event()
+                mailbox_opened = asyncio.Event()
+                received = asyncio.Event()
+                transmitting = asyncio.Event()
+                outbound = b'x' * 4096
+                tail = asyncio.get_running_loop().create_future()
+
+                async def mailbox(reader, writer):
+                    try:
+                        mailbox_opened.set()
+                        if await reader.readexactly(4) == b'body':
+                            received.set()
+                        writer.write(outbound)
+                        await writer.drain()
+                        tail.set_result(await reader.read())
+                    finally:
+                        writer.close()
+                        await writer.wait_closed()
+
+                server = await asyncio.start_server(mailbox, '127.0.0.1', 0)
+                transport = ScopedKiss('127.0.0.1', 1, 0, local, peer)
+                transport.on_sent.append(lambda f, p: transmitting.set() if f.kind == 'I' else None)
+
+                async def open_transport():
+                    transport.state = TransportState.OPEN
+                    opened.set()
+
+                args = SimpleNamespace(kiss_host='127.0.0.1', kiss_port=1, channel=0,
+                                       station='N0LAB-10', peer='N0CALL', enable_tx=True,
+                                       b2f_port=server.sockets[0].getsockname()[1], seconds=10, max_frames=100)
+                with (patch('federated_cms.kiss_lab.ScopedKiss', return_value=transport),
+                      patch.object(transport, 'open', open_transport),
+                      patch.object(transport, '_send_frame', new_callable=AsyncMock) as send):
+                    lab = asyncio.create_task(run_lab(args))
+                    try:
+                        await asyncio.wait_for(opened.wait(), 2)
+                        await transport.dispatch(AX25Frame.u_frame(path, UType.SABM, pf=True))
+                        self.assertEqual(send.await_args.args[0].utype, UType.UA)
+                        if not before_data:
+                            await transport.dispatch(AX25Frame.i_frame(path, 0, 0, b'body'))
+                            await asyncio.wait_for(received.wait(), 2)
+                            await asyncio.wait_for(transmitting.wait(), 2)
+                            sent = sum(len(call.args[0].info) for call in send.await_args_list)
+                            self.assertLess(sent, len(outbound))
+                        send.reset_mock()
+                        await transport.dispatch(AX25Frame.u_frame(path, control, pf=True))
+                        self.assertFalse(transport.gate.enabled)
+                        await transport.dispatch(AX25Frame.i_frame(path, 0, 0, b'later'))
+                        send.assert_not_awaited()
+                        with self.assertRaisesRegex(ConnectionError, 'rearm'):
+                            await asyncio.wait_for(lab, 2)
+                        if before_data:
+                            self.assertFalse(mailbox_opened.is_set())
+                        else:
+                            self.assertEqual(await asyncio.wait_for(tail, 2), b'')
+                    finally:
+                        lab.cancel()
+                        await asyncio.gather(lab, return_exceptions=True)
+                        server.close()
+                        await server.wait_closed()
 
     async def test_programmatic_start_requires_transmit_authorization(self):
         with patch('federated_cms.kiss_lab.ScopedKiss') as transport:
