@@ -185,6 +185,11 @@ unchanged. The guest gateway side still used a kernel AX.25 socket and `ax25d`.
 The guest runner was assembled as an exploratory local fixture and is not yet
 included in the repository or CI; these runs are not a repeatable release
 test. They used no radio, TNC or production credentials, and do not establish
-compatibility with stock installed gateways or real RF links. A first fixture
-attempt was rejected by an `ax25d` rule and was corrected before the passing
-run. Clean disconnect and operational robustness need further testing.
+compatibility with stock installed gateways or real RF links. Earlier fixture
+attempts failed in the virtual KISS bridge and then at an `ax25d` rule; both
+were corrected before the passing runs. Clean disconnect and operational
+robustness need further testing.
+All three logs also recorded `rmsgw` SIGPIPE and an `ax25d` accept error near
+shutdown. The wrong-password run emitted an uncaught bridge-thread exception
+before its success marker. The message and rejection assertions passed, but
+these observations do not establish a clean or reusable session lifecycle.
