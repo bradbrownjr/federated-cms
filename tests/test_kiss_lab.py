@@ -22,6 +22,7 @@ if KISSTERM:
     from kissterm.ax25.address import AX25Address, AX25Path
     from kissterm.ax25.station import AX25Station
     from kissterm.ax25.frame import AX25Frame, UType
+    from kissterm.transport.base import SessionState
     from kissterm.transport.tcp_kiss import TcpKissTransport
     from kissterm.winlink.b2f import Client, Received, Sent
     from kissterm.winlink.message import build, serialize
@@ -138,9 +139,22 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
         server.close()
         await server.wait_closed()
         link = Mock(on_data=[], on_state=[])
+        link.read_nowait.return_value = b''
         finished = asyncio.Event()
         with self.assertRaises(OSError):
             await asyncio.wait_for(bridge(link, port, finished), 5)
+        self.assertTrue(finished.is_set())
+        self.assertEqual(link.on_data, [])
+        self.assertEqual(link.on_state, [])
+
+    async def test_disconnected_before_bridge_does_not_open_b2f(self):
+        link = Mock(on_data=[], on_state=[], connected=False)
+        link.read_nowait.return_value = b''
+        finished = asyncio.Event()
+        with patch('federated_cms.kiss_lab.asyncio.open_connection') as connect:
+            with self.assertRaisesRegex(ConnectionError, 'before bridge startup'):
+                await bridge(link, 63191, finished)
+            connect.assert_not_called()
         self.assertTrue(finished.is_set())
         self.assertEqual(link.on_data, [])
         self.assertEqual(link.on_state, [])
@@ -155,7 +169,8 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
                 await writer.wait_closed()
 
         server = await asyncio.start_server(send_excess, '127.0.0.1', 0)
-        link = SimpleNamespace(on_data=[], on_state=[], _outbound=bytearray(), unacked_sizes=[])
+        link = SimpleNamespace(on_data=[], on_state=[], _outbound=bytearray(), unacked_sizes=[], connected=True,
+                               read_nowait=lambda: b'')
         sent = bytearray()
 
         async def capture(data):
@@ -168,6 +183,40 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(bridge(link, server.sockets[0].getsockname()[1], finished), 5)
             self.assertTrue(finished.is_set())
             self.assertLessEqual(len(sent), MAX_BYTES)
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    async def test_bytes_received_before_bridge_start_are_forwarded(self):
+        got = asyncio.get_running_loop().create_future()
+
+        async def receive(reader, writer):
+            try:
+                got.set_result(await reader.readexactly(3))
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        class BufferedLink:
+            def __init__(self):
+                self.on_data, self.on_state = [], []
+                self._outbound, self.unacked_sizes = bytearray(), []
+                self.buffered = b'abc'
+                self.connected = True
+
+            def read_nowait(self):
+                data, self.buffered = self.buffered, b''
+                return data
+
+            async def disconnect(self):
+                for callback in self.on_state:
+                    callback(SessionState.DISCONNECTED)
+
+        server = await asyncio.start_server(receive, '127.0.0.1', 0)
+        try:
+            await asyncio.wait_for(bridge(BufferedLink(), server.sockets[0].getsockname()[1],
+                                          asyncio.Event()), 5)
+            self.assertEqual(await asyncio.wait_for(got, 3), b'abc')
         finally:
             server.close()
             await server.wait_closed()

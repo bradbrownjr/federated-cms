@@ -81,9 +81,16 @@ async def bridge(link, b2f_port: int, finished: asyncio.Event):
 
     link.on_data.append(on_data)
     link.on_state.append(on_state)
+    # A peer may send an I frame immediately after UA, before this coroutine
+    # gets its first turn. Preserve bytes kissterm has already buffered.
+    buffered = link.read_nowait()
+    if buffered:
+        incoming.put_nowait(buffered)
     writer = None
     server_complete = False
     try:
+        if not link.connected:
+            raise ConnectionError('radio link closed before bridge startup')
         reader, writer = await asyncio.wait_for(asyncio.open_connection('127.0.0.1', b2f_port), 5)
 
         async def to_cms():
