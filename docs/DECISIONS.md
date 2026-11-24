@@ -6,6 +6,7 @@
 - **Self-hosting:** individuals, clubs, and regional organizations can operate nodes.
 - **Universal onramp:** every radio-connected node can accept and forward requests; Internet egress is an advertised optional capability.
 - **Service-oriented routing:** clients request content/services, not a specific Internet exit. Prefer lowest-cost reachable eligible provider, not geographic distance alone.
+- **Decentralized catalog:** nodes should operate with locally approved service entries and exchange bounded provider updates with trusted peers, rather than depend on a mandatory central service catalog. The proposed manifest and exchange format remain undecided ([draft RFC](SERVICE-CATALOG-RFC.md)).
 - **Offline-first:** cache locally, queue durably, reconcile after partitions, and label stale data.
 - **Multi-application:** mail and information retrieval are equal first-class workloads.
 - **Reuse:** bpq-apps and rns-apps remain standalone; integrate through adapters.
@@ -24,7 +25,8 @@ The M0 [technology matrix](TECHNOLOGY-MATRIX.md), [versioned request envelope](R
 - libp2p versus simpler peer discovery for IP links.
 - RF service announcements and packet-size constraints.
 - Callsign verification, portable identity, mailbox delegation and revocation.
-- Provider ranking and advertisement expiration.
+- Provider ranking, catalog record versions/tombstones, trust delegation, signatures, advertisement expiration and packet-efficient encoding.
+- Winlink Query Catalog update/inquiry compatibility for an unmodified Winlink Express client; FCMS catalog commands are provisional and distinct.
 - Application provider API and cache sharing.
 - Winlink client compatibility boundaries.
 
