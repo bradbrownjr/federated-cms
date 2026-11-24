@@ -93,6 +93,8 @@ async def run(host, port, sid, station, peer, seconds=300, b2f_port=None):
             # Give the station time to deliver AX.25 DISC before stopping the
             # virtual KISS link.  Do not leave the diagnostic running forever.
             await asyncio.wait_for(tasks[1], 10)
+        if probe_socket and tasks[0].done() and not tasks[0].cancelled():
+            print(f'SID probe: {tasks[0].result()}.', flush=True)
         print('Virtual KISS session finished.', flush=True)
     finally:
         for task in tasks:
