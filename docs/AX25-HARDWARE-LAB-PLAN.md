@@ -21,6 +21,12 @@ remain work to be done. Use disposable accounts and secrets; do not reuse
 Winlink or administrative credentials. No production Winlink endpoint is part
 of this plan.
 
+Winlink Express can change the real Winlink account password through its
+settings. Do not enter a lab password into a production-linked Express setup,
+and do not assume a local profile isolates account updates. Its isolation
+behavior needs verification before it is used for this experiment. See
+[Winlink's password guidance](https://winlink.org/content/password_problems).
+
 ## Proposed staged checks
 
 1. Inventory devices and software without opening transmit paths. Record exact
