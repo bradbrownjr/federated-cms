@@ -47,6 +47,24 @@ class AX25GuestTests(unittest.TestCase):
             build = stage.call_args.args[1]
             self.assertFalse(build.exists())
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux launcher signal handling')
+    def test_termination_during_spawn_reaps_started_guest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (patch.object(run.subprocess, 'Popen') as spawn,
+                  patch.object(run.os, 'killpg') as killpg):
+                child = spawn.return_value
+                child.pid = 12345
+                def start(*args, **kwargs):
+                    signal.raise_signal(signal.SIGTERM)
+                    return child
+                spawn.side_effect = start
+                with self.assertRaises(SystemExit) as result:
+                    run.boot('pat', root, root, root / 'guest.log')
+                self.assertEqual(result.exception.code, 128 + signal.SIGTERM)
+                killpg.assert_called_once_with(child.pid, signal.SIGKILL)
+                child.wait.assert_called_once_with()
+
     def test_require_one_dispatch_frames_case_result_and_clean_teardown(self):
         for case, outcome in CASES.items():
             lines = [

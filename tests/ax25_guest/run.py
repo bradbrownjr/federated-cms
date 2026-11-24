@@ -227,19 +227,40 @@ def boot(case, packages, build, log):
         '-initrd', build / 'guest.cpio.gz', '-append', f'console=ttyS0 rdinit=/init panic=-1 loglevel=3 fcms_case={case}',
     ]
     with log.open('xb') as stream:
-        child = subprocess.Popen(command, cwd=build, env=ENV, start_new_session=True,
-                                 stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT)
+        # Defer interruption until the new process is owned by the cleanup
+        # block. Signal masks are not used: they would be inherited by QEMU.
+        pending = []
+        watched = (signal.SIGTERM, signal.SIGINT)
+        previous = {sig: signal.getsignal(sig) for sig in watched}
+        def defer(sig, _frame):
+            pending.append(sig)
+        child = None
         try:
+            for sig in watched:
+                signal.signal(sig, defer)
+            child = subprocess.Popen(command, cwd=build, env=ENV, start_new_session=True,
+                                     stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT)
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+            if pending:
+                raise SystemExit(128 + pending[0])
             status = child.wait(timeout=180)
             if status:
                 raise subprocess.CalledProcessError(status, command)
         except BaseException:
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            child.wait()
+            if child is not None:
+                # Finish reaping even if a second termination request arrives.
+                for sig in watched:
+                    signal.signal(sig, signal.SIG_IGN)
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait()
             raise
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
     verify_log(case, log.read_text(errors='replace'))
 
 
