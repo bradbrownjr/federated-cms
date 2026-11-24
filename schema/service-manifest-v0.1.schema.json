@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bradbrownjr/federated-cms/blob/main/schema/service-manifest-v0.1.schema.json",
+  "title": "Federated CMS v0.1 research service manifest",
+  "description": "Proposed localhost/IP catalog record only, not production discovery or a signed advertisement. Timestamp ordering, duplicate JSON keys, uniqueness of parameter names, byte limits and authorization require runtime checks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "catalog_version",
+    "service_id",
+    "provider_node",
+    "revision",
+    "published_at",
+    "expires_at",
+    "display",
+    "request",
+    "cache",
+    "access"
+  ],
+  "properties": {
+    "catalog_version": {
+      "const": "0.1"
+    },
+    "service_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "maxLength": 64
+    },
+    "provider_node": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "maxLength": 128
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 40
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 40
+    },
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "category",
+        "description"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "category": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,31}$",
+          "maxLength": 32
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "parameters",
+        "response_media_type",
+        "max_response_bytes"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "maxLength": 64
+        },
+        "parameters": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "type",
+              "required"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "maxLength": 32
+              },
+              "type": {
+                "enum": [
+                  "maidenhead",
+                  "text",
+                  "integer",
+                  "boolean"
+                ]
+              },
+              "required": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "response_media_type": {
+          "const": "text/plain; charset=utf-8"
+        },
+        "max_response_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2048
+        }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ttl_seconds",
+        "stale_allowed"
+      ],
+      "properties": {
+        "ttl_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 604800
+        },
+        "stale_allowed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "suggested_max_requests_per_hour"
+      ],
+      "properties": {
+        "policy": {
+          "enum": [
+            "public_test",
+            "approved_peers",
+            "authenticated_operator"
+          ]
+        },
+        "suggested_max_requests_per_hour": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        }
+      }
+    }
+  }
+}
