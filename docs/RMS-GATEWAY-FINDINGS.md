@@ -153,7 +153,8 @@ Pat exited zero, and the client and reopened mailbox checks passed in both runs.
 
 The pinned source writes the sign-off before recording logout and updating
 per-user statistics. The signal interrupted those later steps in the traced
-session. A clean gateway exit on the Pat path remains unverified. The trace
+session. This unmodified loopback run did not demonstrate a clean gateway
+exit on the Pat path. The trace
 covers a single loopback session and does not establish close ordering on
 other transports. [Pinned gateway session code](https://github.com/nwdigitalradio/rmsgw/blob/3147f017545f43c4b83ef6a037b8b0e38d0719af/rmsgw/session.c#L169-L201).
 
@@ -164,7 +165,7 @@ RF and AX.25, stock installed gateway binaries, other gateway revisions, and
 production authentication remain unverified by this experiment.
 [Reproduce the five namespace cases](../tests/rmsgw_full/README.md).
 
-## Exploratory virtual AX.25 guest
+## Isolated virtual AX.25 guest
 
 In a separate local experiment, a disposable Debian 6.12.118 kernel ran in a
 QEMU TCG guest with no network device, shared filesystem, or device passthrough.
@@ -182,14 +183,17 @@ verified messages, attachments and reopened mailbox state; another run
 verified that a wrong B2F mailbox secret was rejected and pending mail remained
 unchanged. The guest gateway side still used a kernel AX.25 socket and `ax25d`.
 
-The guest runner was assembled as an exploratory local fixture and is not yet
-included in the repository or CI; these runs are not a repeatable release
-test. They used no radio, TNC or production credentials, and do not establish
-compatibility with stock installed gateways or real RF links. Earlier fixture
-attempts failed in the virtual KISS bridge and then at an `ax25d` rule; both
-were corrected before the passing runs. Clean disconnect and operational
-robustness need further testing.
-All three logs also recorded `rmsgw` SIGPIPE and an `ax25d` accept error near
-shutdown. The wrong-password run emitted an uncaught bridge-thread exception
-before its success marker. The message and rejection assertions passed, but
-these observations do not establish a clean or reusable session lifecycle.
+Earlier exploratory runs encountered a KISS bridge error, an `ax25d` rule
+rejection, an `ax25d` accept error during fixture shutdown, and a bridge-thread
+exception. The packaged [offline guest harness](../tests/ax25_guest/README.md)
+uses pinned local inputs and ordered fixture shutdown. Its three local cases
+passed message or rejection assertions, AX.25 release and listener shutdown;
+the full QEMU experiment is optional and is not run in CI.
+
+The harness separately monitors gateway process exit. In an unmodified pinned
+gateway run all three cases ended with SIGPIPE. An **opt-in experimental
+patch** blocks SIGPIPE only around the two final optional session notices. In
+a separate local run with that patch, all three gateway processes exited zero
+and the exchange or rejection checks passed. This does not modify an installed
+gateway or prove clean shutdown in other conditions. Other gateway writes,
+repeated sessions, stock installations, physical TNCs and RF remain unverified.

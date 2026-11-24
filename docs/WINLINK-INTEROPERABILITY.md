@@ -35,14 +35,17 @@ not a claim that an installed gateway or client is supported in production.
 | kissterm B2F client, pinned `f3310c7` → local B2F lab | Bidirectional messages, attachments and durable SQLite state tested locally; client interoperability also runs in CI. | Terminal UI and RF path not exercised. |
 | Pat CLI, pinned `2ad31e8` → local B2F lab | Bidirectional message and attachment exchange tested locally and in CI. | Does not establish behavior of other client versions. |
 | Both pinned clients → pinned `rmsgw` `3147f01` → test SGL adapter → B2F lab | Full isolated local chain tested with separate gateway and mailbox authentication, binary attachments, rejection cases and reopened SQLite. | Full chain is not in CI; the Pat case observed gateway SIGPIPE during teardown. Client-facing streams were simulated sockets, not AX.25. |
-| Pat CLI and kissterm → virtual KISS → guest-kernel AX.25 → `ax25d` → pinned `rmsgw` → lab mailbox | Separate isolated, no-NIC QEMU guest runs exchanged synthetic messages and attachments in both directions and checked reopened SQLite state. A separate kissterm run rejected a wrong mailbox password. | Exploratory fixture is not yet a reproducible repository harness or CI job; shutdown errors were observed. No TNC or RF was used. |
+| Pat CLI and kissterm → virtual KISS → guest-kernel AX.25 → `ax25d` → pinned `rmsgw` → lab mailbox | The optional repository guest harness exchanged synthetic messages and attachments, checked reopened SQLite, and rejected a wrong mailbox password. An opt-in experimental patch produced clean gateway exits in all three local cases. | Guest cases are not in CI. The unmodified gateway exited on SIGPIPE in the monitored baseline. No physical TNC or RF was used. |
 | Stock installed Linux RMS gateway, TNC, RF, BPQ32 or RMS Packet deployment | Not demonstrated. | Requires controlled deployment-specific testing; no production compatibility is claimed. |
 | Winlink Express | Not demonstrated. | Client behavior and authentication require separate tests. |
 
 The gateway experiment compiles the pinned upstream session and relay code
 with lab-specific paths and logging shims; it is not a stock installed binary.
-See [the harness instructions](../tests/rmsgw_full/README.md) and
+See [the client harness](../tests/rmsgw_full/README.md),
+[AX.25 guest harness](../tests/ax25_guest/README.md), and
 [gateway findings](RMS-GATEWAY-FINDINGS.md) for setup and evidence.
+The [hardware lab plan](AX25-HARDWARE-LAB-PLAN.md) describes information
+needed before testing a physical TNC or modem.
 
 ## Research work packages
 
