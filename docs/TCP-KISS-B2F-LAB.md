@@ -152,6 +152,15 @@ no actual Express implementation, carrier detection, RF loss or modem timing,
 and its timing values are scaled test parameters, not field recommendations.
 The tests do not establish the configuration of the real Express sender.
 
+The operator's Surface settings screenshots show Express configured for KISS
+`NORMAL`, 1200 baud, 128-byte maximum packets, four maximum frames, Frack 2,
+five retries and IPoll enabled. Surface SoundModem identifies itself as
+UZ7HO 1.13 and shows KISS Optimization unchecked. The public
+[Winlink setup guide](https://winlink.org/sites/default/files/RMSE_FORMS/quick_setup_guide_for_winlink_with_signalink_on_windows_v20190311a.pdf)
+recommends `ACKMODE` for most SoundModem setups. These screenshots do not prove
+why the observed retries occurred, and NORMAL/ACKMODE must be compared in
+controlled sessions before drawing a conclusion.
+
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
 Run it on the client computer on a private loopback connection only; never
