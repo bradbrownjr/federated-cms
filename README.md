@@ -18,6 +18,7 @@ CMS is used here descriptively for **Common Message Server**; this project is in
 - Individuals, clubs, and regions can run autonomous nodes.
 - Every radio-connected node can accept and forward requests; Internet connectivity is optional.
 - Clients request content and services without manually selecting an Internet exit node.
+- Operators publish service manifests locally; approved peers exchange catalog updates offline, without a mandatory central catalog.
 - Mail, weather, RSS, Gopher, text web, bulletins, and forms are first-class applications.
 - Local caches work during partitions, with explicit source and freshness metadata.
 - Durable queues, bounded retries, deduplication, and delivery status survive restarts.
@@ -36,6 +37,7 @@ CMS is used here descriptively for **Common Message Server**; this project is in
 - [BPQ cross-platform Telnet/SSID CMS interface (draft)](docs/BPQ-LOCAL-INTERFACE.md)
 - [M0 technology comparison and benchmark plan](docs/TECHNOLOGY-MATRIX.md)
 - [Request envelope v0.1 (draft)](docs/REQUEST-ENVELOPE-v0.1.md) ([JSON Schema](schema/envelope-v0.1.schema.json))
+- [Federated service catalog and inquiry routing (draft)](docs/SERVICE-CATALOG-RFC.md) ([manifest schema](schema/service-manifest-v0.1.schema.json), [synthetic example](examples/service-weather-manifest-v0.1.json))
 - [M0 RF/IP threat model and airtime baseline](docs/THREAT-MODEL-M0.md)
 - [Linux RMS Gateway source findings](docs/RMS-GATEWAY-FINDINGS.md)
 - [Mailbox identity and authorization proposal](docs/MAILBOX-AUTHORIZATION-DESIGN.md)
