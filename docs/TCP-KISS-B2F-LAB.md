@@ -170,6 +170,12 @@ the uploaded message and both attachments, and the download was no longer
 pending. This favorable result supports further ACKMODE testing but is a
 single comparison with uncontrolled radio conditions, not a proven cause or
 general throughput guarantee.
+
+A later ACKMODE radio session repeated the exchange after the bridge's reset
+and UI-frame handling changes. The uploaded 256-byte synthetic binary fixture
+was compared byte-for-byte with the stored attachment after reopening SQLite
+and matched; the lab's outgoing queue was empty after the reported download.
+The downloaded binary fixture still needs a byte-for-byte client-side check.
 The operator later reported that both radios were set to 5 W, with one roof
 antenna and one indoor antenna approximately four feet from the radio-room
 radio; the radios were approximately ten feet apart. Antenna-to-antenna
