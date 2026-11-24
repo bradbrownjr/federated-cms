@@ -116,6 +116,15 @@ upload bytes in 88 seconds. The operator's monitor showed retransmitted I
 frames and REJ responses during the upload; the source of the retransmissions
 has not yet been determined. The lab log confirmed the final DISC/UA. This is
 one physical-radio experiment, not general compatibility or throughput proof.
+The receiving-modem trace shows sequences of RR acknowledgments emitted in
+bursts, plus repeated sender frames and REJ responses. The pinned kissterm
+link defaults to a one-second delayed-acknowledgment timer and immediately
+answers polls. A short acknowledgment delay relative to frame airtime and
+half-duplex modem queuing is a plausible contributor, but the trace alone
+does not establish cause; radio losses, turnaround and sender timers also need
+to be controlled in a comparison. A separate trace supplied by the operator
+shows retries with another gateway, but differs in station, session and client
+version, so it is not a controlled benchmark.
 
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
