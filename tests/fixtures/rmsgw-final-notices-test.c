@@ -27,6 +27,10 @@ int main(void)
     sigemptyset(&pipe_set);
     sigaddset(&pipe_set, SIGPIPE);
     if (sigprocmask(SIG_BLOCK, &pipe_set, &original) != 0) return 8;
+    /* A caller that already blocked SIGPIPE must retain a newly pending one. */
+    if (send_final_notice(fd[1], text, strlen(text)) != -1 || errno != EPIPE) return 14;
+    if (sigpending(&pending) != 0 || sigismember(&pending, SIGPIPE) != 1) return 15;
+    if (sigwait(&pipe_set, &sig) != 0 || sig != SIGPIPE) return 16;
     if (raise(SIGPIPE) != 0) return 9;
     if (send_final_notice(fd[1], text, strlen(text)) != -1 || errno != EPIPE) return 10;
     if (sigpending(&pending) != 0 || sigismember(&pending, SIGPIPE) != 1) return 11;
