@@ -90,6 +90,15 @@ in the lab inbox. These sessions do not demonstrate a radio exchange with the
 modified SID or production Winlink compatibility. No authentication challenges
 or responses are recorded here.
 
+A simulated-KISS attachment session exposed an Express 1.8.0.0 message ending
+with CRLF and an additional NUL after the final attachment. The lab validator
+now accepts that specific observed ending for messages with attachments,
+preserving the received bytes; other unexplained trailing data is rejected.
+Express subsequently reported an upload containing two attachments and a
+download of a message with a synthetic attachment. A reopened lab database
+contained the upload with both declared attachments and no pending outgoing
+messages. Confirming the downloaded file in the client is a separate check.
+
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
 Run it on the client computer on a private loopback connection only; never
