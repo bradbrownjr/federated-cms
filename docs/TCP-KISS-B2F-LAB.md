@@ -13,6 +13,15 @@ disposable lab credentials, with synthetic messages only. Do not reuse Winlink
 credentials or expose private mail. TCP KISS gives network clients access to a
 modem; use a trusted network and protect that access separately.
 
+**Winlink Express account warning:** changing a password in Winlink Express
+can also change the password on the real Winlink account. Do not enter the
+laboratory password into a production-linked Winlink Express setup. Merely
+using a different local profile must not be assumed to prevent an account
+update. Winlink Express has not been validated for isolated testing here;
+use an independently configured test client with disposable credentials
+until its account-update behavior and isolation are verified. See Winlink's
+[password guidance](https://winlink.org/content/password_problems).
+
 ## Prerequisites
 
 * A trusted local checkout or installation of kissterm at tested commit

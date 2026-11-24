@@ -43,6 +43,9 @@ Create `lab-password.txt` manually with a disposable test
 password, restrict file permissions to the local test account, and configure the
 same test password in the client. The server issues a B2F `;PQ:` challenge and
 checks the client's `;PR:` response against that single configured lab account.
+Do not enter a lab password into a production-linked Winlink Express setup:
+Winlink Express can update the real account password. See
+[Winlink's password guidance](https://winlink.org/content/password_problems).
 The file contains a recoverable plaintext password, which this legacy algorithm
 requires; do not use a real Winlink password or reuse any production secret.
 The challenge uses MD5 and an eight-digit response, is vulnerable to offline
