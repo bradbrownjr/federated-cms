@@ -69,6 +69,12 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
         await transport.dispatch(frame(AX25Path(station, peer, (AX25Address.parse('DIGI'),))), 0)
         self.assertEqual(received, [valid])
 
+    async def test_programmatic_start_requires_transmit_authorization(self):
+        with patch('federated_cms.kiss_lab.ScopedKiss') as transport:
+            with self.assertRaisesRegex(ValueError, 'transmit authorization'):
+                await run_lab(SimpleNamespace(enable_tx=False))
+            transport.assert_not_called()
+
     async def test_modem_disconnect_stops_instead_of_rearming(self):
         accepted = 0
         received = bytearray()
@@ -88,7 +94,7 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
         server = await asyncio.start_server(drop, '127.0.0.1', 0)
         args = SimpleNamespace(kiss_host='127.0.0.1', kiss_port=server.sockets[0].getsockname()[1],
                                channel=0, station='N0LAB-10', peer='N0CALL', b2f_port=1,
-                               max_frames=10, seconds=4)
+                               max_frames=10, seconds=4, enable_tx=True)
         try:
             with self.assertRaises(ConnectionError):
                 await asyncio.wait_for(run_lab(args), 3)
@@ -173,7 +179,7 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
             port = hub.sockets[0].getsockname()[1]
             args = SimpleNamespace(kiss_host='127.0.0.1', kiss_port=port, channel=0,
                                    station='N0LAB-10', peer='N0CALL', b2f_port=b2f.server_address[1],
-                                   max_frames=500, seconds=45)
+                                   max_frames=500, seconds=45, enable_tx=True)
             lab = asyncio.create_task(run_lab(args))
             transport = TcpKissTransport('127.0.0.1', port)
             client_station = None

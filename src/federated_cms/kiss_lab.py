@@ -146,6 +146,8 @@ async def bridge(link, b2f_port: int, finished: asyncio.Event):
 
 
 async def run_lab(args):
+    if not getattr(args, 'enable_tx', False):
+        raise ValueError('explicit transmit authorization is required')
     station_addr = address(args.station)
     peer = address(args.peer)
     if (station_addr.callsign, station_addr.ssid) == (peer.callsign, peer.ssid):
