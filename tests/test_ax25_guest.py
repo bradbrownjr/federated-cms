@@ -1,9 +1,12 @@
 """Fail closed if a pinned input or the required AX.25 evidence is missing."""
 from pathlib import Path
+import signal
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from tests.ax25_guest import run
 from tests.ax25_guest.run import CASES, pins, unpack_packages, verify_log
 
 
@@ -17,6 +20,32 @@ class AX25GuestTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'archive checksum mismatch'):
                     unpack_packages(root, root)
                 extract.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux launcher signal handling')
+    def test_termination_kills_guest_group_and_removes_private_build(self):
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.getsignal(signal.SIGTERM))
+        argv = ['run.py', '--source', '.', '--kissterm-source', '.', '--pat-binary', '.', '--packages', '.']
+        with (patch.object(sys, 'argv', argv), patch.object(run.os, 'geteuid', return_value=1000),
+              patch.object(run.subprocess, 'check_output', return_value='amd64'),
+              patch.object(run, 'stage', side_effect=lambda args, build: build / 'packages') as stage,
+              patch.object(run.subprocess, 'Popen') as spawn, patch.object(run.os, 'killpg') as killpg):
+            child = spawn.return_value
+            child.pid = 12345
+
+            def wait(timeout=None):
+                if timeout is not None:
+                    self.assertIs(signal.getsignal(signal.SIGTERM), run.terminate)
+                    signal.raise_signal(signal.SIGTERM)
+                return 0
+
+            child.wait.side_effect = wait
+            with self.assertRaises(SystemExit) as result:
+                run.main()
+            self.assertEqual(result.exception.code, 128 + signal.SIGTERM)
+            killpg.assert_called_once_with(child.pid, signal.SIGKILL)
+            self.assertEqual(child.wait.call_count, 2)
+            build = stage.call_args.args[1]
+            self.assertFalse(build.exists())
 
     def test_require_one_dispatch_frames_case_result_and_clean_teardown(self):
         for case, outcome in CASES.items():
