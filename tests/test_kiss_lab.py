@@ -17,7 +17,7 @@ from tests.lab_mailbox_helpers import mailbox_call
 KISSTERM = os.environ.get('FCMS_KISSTERM_PATH')
 if KISSTERM:
     sys.path.insert(0, KISSTERM)
-    from federated_cms.kiss_lab import LabGate, ScopedKiss, bridge, main, run_lab
+    from federated_cms.kiss_lab import MAX_BYTES, LabGate, ScopedKiss, bridge, main, run_lab
     from kissterm.ax25.address import AX25Address, AX25Path
     from kissterm.ax25.station import AX25Station
     from kissterm.ax25.frame import AX25Frame, UType
@@ -44,6 +44,17 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SystemExit):
                 main()
             run.assert_not_called()
+
+    def test_invalid_or_duplicate_addresses_open_no_connections(self):
+        for station, peer in (('N0LAB-16', 'N0CALL'), ('N0LAB*', 'N0CALL'),
+                              ('N0CALL-0', 'N0CALL')):
+            argv = ['kiss_lab', '--kiss-host', '127.0.0.1', '--kiss-port', '1234',
+                    '--station', station, '--peer', peer, '--enable-tx']
+            with self.subTest(station=station, peer=peer), patch.object(sys, 'argv', argv), \
+                    patch('federated_cms.kiss_lab.run_lab') as run:
+                with self.assertRaises(SystemExit):
+                    main()
+                run.assert_not_called()
 
     async def test_filters_other_sources_channels_and_digipeaters(self):
         station, peer = AX25Address.parse('N0LAB-10'), AX25Address.parse('N0CALL')
@@ -100,6 +111,33 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(finished.is_set())
         self.assertEqual(link.on_data, [])
         self.assertEqual(link.on_state, [])
+
+    async def test_b2f_output_limit_stops_forwarding(self):
+        async def send_excess(reader, writer):
+            try:
+                writer.write(b'X' * (MAX_BYTES + 1))
+                await writer.drain()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(send_excess, '127.0.0.1', 0)
+        link = SimpleNamespace(on_data=[], on_state=[], _outbound=bytearray(), unacked_sizes=[])
+        sent = bytearray()
+
+        async def capture(data):
+            sent.extend(data)
+
+        link.send = capture
+        finished = asyncio.Event()
+        try:
+            with self.assertRaisesRegex(ValueError, 'radio output limit'):
+                await asyncio.wait_for(bridge(link, server.sockets[0].getsockname()[1], finished), 5)
+            self.assertTrue(finished.is_set())
+            self.assertLessEqual(len(sent), MAX_BYTES)
+        finally:
+            server.close()
+            await server.wait_closed()
 
     async def test_local_kiss_b2f_exchange_and_persistence(self):
         with tempfile.TemporaryDirectory() as directory:

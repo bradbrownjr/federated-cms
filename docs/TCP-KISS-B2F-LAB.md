@@ -58,6 +58,10 @@ both may be reduced for a shorter test. Each direction is capped at 65536
 bytes. The B2F lab has its own connection timeout and mailbox lease; large or
 slow transfers may time out and need separate testing. Stop and inspect the
 logs and mailbox after a test; a disconnect alone does not prove delivery.
+Each accepted outbound frame is logged to stdout with UTC time, KISS channel,
+frame type and byte count, without message content or challenge responses.
+Retaining that output is the operator's choice; these counts do not measure
+actual RF airtime or establish that the frame was transmitted over the air.
 
 This path does not exercise RMS gateway SGL or a remote LinBPQ installation.
 See the [interoperability research plan](WINLINK-INTEROPERABILITY.md) for the

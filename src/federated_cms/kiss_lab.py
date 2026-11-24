@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+from datetime import UTC, datetime
+import re
 import time
 
 from kissterm.ax25.address import AX25Address
@@ -18,6 +20,12 @@ from kissterm.tx import TransmitGate
 
 MAX_BYTES = 65536
 QUEUE_ITEMS = 256
+
+
+def address(text: str) -> AX25Address:
+    if not re.fullmatch(r'[A-Za-z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?', text):
+        raise ValueError('invalid direct AX.25 callsign or SSID')
+    return AX25Address.parse(text)
 
 
 class LabGate(TransmitGate):
@@ -138,11 +146,20 @@ async def bridge(link, b2f_port: int, finished: asyncio.Event):
 
 
 async def run_lab(args):
-    station_addr = AX25Address.parse(args.station)
-    peer = AX25Address.parse(args.peer)
+    station_addr = address(args.station)
+    peer = address(args.peer)
+    if (station_addr.callsign, station_addr.ssid) == (peer.callsign, peer.ssid):
+        raise ValueError('station and peer must have distinct AX.25 addresses')
     transport = ScopedKiss(args.kiss_host, args.kiss_port, args.channel, station_addr, peer)
     gate = LabGate(args.max_frames, args.seconds)
     transport.gate = gate
+
+    def log_sent(frame, port):
+        # Log metadata only; do not put challenge responses or B2 content in logs.
+        timestamp = datetime.now(UTC).isoformat(timespec='seconds')
+        print(f'TX {timestamp} port={port} kind={frame.kind} bytes={len(frame.encode())}', flush=True)
+
+    transport.on_sent.append(log_sent)
     finished = asyncio.Event()
     station = None
     task = None
@@ -196,6 +213,12 @@ def main():
             and 0 <= args.channel <= 15 and 1 <= args.seconds <= 3600
             and 1 <= args.max_frames <= 5000):
         parser.error('port, channel or lab limits are out of range')
+    try:
+        local, peer = address(args.station), address(args.peer)
+        if (local.callsign, local.ssid) == (peer.callsign, peer.ssid):
+            parser.error('station and peer must have distinct AX.25 addresses')
+    except ValueError as exc:
+        parser.error(str(exc))
     try:
         asyncio.run(run_lab(args))
     except KeyboardInterrupt:
