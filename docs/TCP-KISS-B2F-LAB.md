@@ -97,7 +97,8 @@ preserving the received bytes; other unexplained trailing data is rejected.
 Express subsequently reported an upload containing two attachments and a
 download of a message with a synthetic attachment. A reopened lab database
 contained the upload with both declared attachments and no pending outgoing
-messages. Confirming the downloaded file in the client is a separate check.
+messages. The operator also opened the downloaded synthetic text attachment
+in Express and confirmed that its contents matched the sent fixture.
 
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
