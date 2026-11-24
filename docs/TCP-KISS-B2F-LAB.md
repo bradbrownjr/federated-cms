@@ -17,9 +17,9 @@ modem; use a trusted network and protect that access separately.
 can also change the password on the real Winlink account. Do not enter the
 laboratory password into a production-linked Winlink Express setup. Merely
 using a different local profile must not be assumed to prevent an account
-update. Winlink Express has not been validated for isolated testing here;
-use an independently configured test client with disposable credentials
-until its account-update behavior and isolation are verified. See Winlink's
+update. Use an independently configured test client with disposable
+credentials. Before entering those credentials in Express, independently
+verify that the test setup is isolated from real account updates. See Winlink's
 [password guidance](https://winlink.org/content/password_problems).
 
 ## Prerequisites
@@ -47,28 +47,26 @@ Winlink mode established a direct AX.25 connection to the lab. Express
 reported that the lab's `FCMS` SID was invalid, classified the endpoint as a
 peer-to-peer station and disconnected without sending an authentication
 response. Its session window also displayed the challenge and prompt. The
-server's synthetic message remained pending. This demonstrates the radio and
-link path, not Express B2F compatibility. The reason for Express's endpoint
-classification is not yet established; do not infer that the password was
-wrong or change the SID to claim another service's identity based on this one
-observation. The corresponding offline regression verifies that an
-unauthenticated client refusal cannot retrieve the pending message.
+server's synthetic message remained pending. The initial trial established
+the radio and link path. The corresponding offline regression verifies that a
+client refusal before authentication leaves the pending message in the
+mailbox.
 
 An operator-supplied successful Packet Winlink reference session displayed
 `[WL2K-5.0-B2FWIHJM$]`, which also appears as an example in the public
 [Open B2F specification](https://winlink.org/B2F). Both identifiers contain
 `B2` and `F`, but their software names, versions and other feature characters
-differ. This comparison alone does not establish which difference caused the
-rejection, or whether Express checks something else.
+differ, so the follow-up probes kept the FCMS name and version and varied the
+feature characters.
 
 In a subsequent virtual TCP KISS experiment with Express 1.8.0.0, the
 reference SID and `[FCMS-0.1-B2FWIHJM$]` both led to a client handshake.
 The otherwise identical pair `[FCMS-0.1-B2FWHM$]` and
 `[FCMS-0.1-B2FHM$]` respectively led to a handshake and a peer-to-peer/SID
-rejection. This indicates `W` controls that decision in the tested version
-and setup; it does not establish full protocol interoperability or define the
-complete semantics of that feature. These comparisons used a probe without a
-challenge, authentication, mailbox or radio.
+rejection. Adding `W` changed the decision for that pair in the tested
+version and setup. These comparisons used a probe without a challenge,
+authentication, mailbox or radio. The meaning of `W` beyond that observed
+decision remains open.
 
 For further controlled testing, `tests.virtual_kiss_sid` can connect its
 virtual KISS network to a loopback B2F lab endpoint with `--b2f-port`. Its
@@ -86,9 +84,8 @@ the inbox and disconnected; the reopened lab database had no pending outgoing
 messages. This demonstrates a lab download and authentication in this setup,
 and a subsequent session uploaded a synthetic message. Express reported a
 successful send, and a newly opened database connection confirmed the message
-in the lab inbox. These sessions do not demonstrate a radio exchange with the
-modified SID or production Winlink compatibility. No authentication challenges
-or responses are recorded here.
+in the lab inbox. The radio trials below exercised the modified SID on the
+physical link. The session record omits authentication challenges and responses.
 
 A simulated-KISS attachment session exposed an Express 1.8.0.0 message ending
 with CRLF and an additional NUL after the final attachment. The lab validator
@@ -228,9 +225,9 @@ not logged.
 Retaining that output is the operator's choice; these counts do not measure
 actual RF airtime or establish that the frame was transmitted over the air.
 
-For a small synthetic download, seed the dedicated database while no B2F lab
-session is active. The example uses `LAB_ACCOUNT` and `LAB_DATABASE` from
-the operator's environment and the same Python environment as the bridge:
+For a small synthetic attachment download, seed the dedicated database while
+no B2F lab session is active. The example uses `LAB_ACCOUNT` and `LAB_DATABASE`
+from the operator's environment and the same Python environment as the bridge.
 
 ```python
 import os, secrets
@@ -240,7 +237,8 @@ from kissterm.winlink.message import build, serialize
 account = os.environ['LAB_ACCOUNT'].upper()
 service = CMSCore(SQLiteStore(os.environ['LAB_DATABASE'])).lab_mailbox()
 message = build(mid=secrets.token_hex(6).upper(), sender=account, to=[account],
-                subject='Federated CMS lab', body='Synthetic test message.')
+                subject='Federated CMS lab', body='Synthetic test message.',
+                files=[('lab-fixture.txt', b'Synthetic lab attachment.\n')])
 session = service.open_session(account)
 try:
     service.store_message(session, message.mid, serialize(message), 'out')
@@ -254,6 +252,53 @@ After the session has ended, `service.list_incoming(session)` and
 messages inside a new trusted session. Close that session afterward. Check the
 client's received and sent records as well as the server database; a local
 gateway acceptance is not a delivery receipt from another human recipient.
+
+### Repeat the Express attachment trial
+
+Use the isolated Express setup and station controls described above. Queue a
+synthetic attachment message in the dedicated lab database, then close the
+seeding session. Queue a separate synthetic attachment message for upload in
+Express with two synthetic files. Start a loopback B2F server from a checkout
+that accepts the extra NUL after the final attachment observed in Express
+1.8.0.0. This example uses port 63194 for that server. The general bridge
+example above connects directly to port 63191.
+
+```text
+python -m federated_cms.b2f --port 63194 --lab-account LAB_ACCOUNT --password-file LAB_PASSWORD_FILE --database LAB_DATABASE
+```
+
+Run the one-session SID relay from the repository root and point it at the
+updated server on port 63194.
+
+```text
+python -m tests.radio_sid_relay --port 63195 --b2f-port 63194 --seconds 600
+```
+
+The relay checks the B2F listener and its SID before printing its readiness
+message. Once it prints that message, start the bridge with the operator's
+modem and direct station addresses. Point the bridge at the relay port to
+present the experimental FCMS SID used in the successful Express sessions.
+
+```text
+python -m federated_cms.kiss_lab --kiss-host MODEM_HOST --kiss-port MODEM_PORT --station STATION_CALL --peer CLIENT_CALL --b2f-port 63195 --ack-delay 1 --enable-tx
+```
+
+Set the Express Packet TNC Model to `ACKMODE` with a compatible modem, then
+initiate one direct Packet Winlink session to the lab station. Check for the
+final DISC/UA and verify that the downloaded attachment opens in Express and
+matches the fixture. After disconnect, reopen the SQLite database and confirm
+that the download is no longer pending. Find the new upload's message ID in
+the lab inbox and verify the attachment bytes using the original files in
+their B2 `File` header order.
+
+```text
+python -m tests.verify_lab_attachments LAB_DATABASE LAB_ACCOUNT UPLOAD_MID FIXTURE_PATH_1 FIXTURE_PATH_2
+```
+
+For a NORMAL/ACKMODE comparison, keep T2 and the other packet and radio
+settings fixed, restart the bridge and relay for each run, and use comparably
+sized synthetic fixtures with fresh message IDs. Record completion, duration
+and retransmissions.
 
 This path does not exercise RMS gateway SGL or a remote LinBPQ installation.
 See the [interoperability research plan](WINLINK-INTEROPERABILITY.md) for the
