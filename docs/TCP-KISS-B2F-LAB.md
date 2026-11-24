@@ -54,6 +54,15 @@ wrong or change the SID to claim another service's identity based on this one
 observation. The corresponding offline regression verifies that an
 unauthenticated client refusal cannot retrieve the pending message.
 
+For controlled identifier experiments, `python -m tests.sid_probe --sid
+'[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
+Run it on the client computer on a private loopback connection only; never
+forward it to a radio or external network. It sends the selected identifier
+and a diagnostic prompt, has no password, challenge or mailbox, and reports
+only whether the client sent data. It cannot complete a B2F session. A test
+against a Telnet session may provide a clue, but cannot establish Packet
+Winlink behavior because the client may treat the transports differently.
+
 ## Operator-controlled use
 
 Before any operation that could key a transmitter, establish the actual
