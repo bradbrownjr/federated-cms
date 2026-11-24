@@ -143,6 +143,14 @@ shows that repeated incoming polls queue repeated final responses even with a
 long T2. This is a deterministic model of queueing, not a simulation of
 Express timers, actual modem carrier detection, RF loss or their interaction;
 it cannot establish the root cause of the physical trial or validate a fix.
+`tests.radio_timing_model` extends this with two kissterm AX.25 stations, a
+lossless FIFO half-duplex channel with scaled per-frame airtime and turnaround,
+and a 2,048-byte synthetic stream. In this model a short sender T1 produces
+retransmissions; a longer sender T1 can complete with the original sixteen
+data frames. It assumes that queued KISS frames are accepted immediately, has
+no actual Express implementation, carrier detection, RF loss or modem timing,
+and its timing values are scaled test parameters, not field recommendations.
+The tests do not establish the configuration of the real Express sender.
 
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
