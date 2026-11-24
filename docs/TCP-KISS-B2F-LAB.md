@@ -54,6 +54,13 @@ wrong or change the SID to claim another service's identity based on this one
 observation. The corresponding offline regression verifies that an
 unauthenticated client refusal cannot retrieve the pending message.
 
+An operator-supplied successful Packet Winlink reference session displayed
+`[WL2K-5.0-B2FWIHJM$]`, which also appears as an example in the public
+[Open B2F specification](https://winlink.org/B2F). Both identifiers contain
+`B2` and `F`, but their software names, versions and other feature characters
+differ. This comparison alone does not establish which difference caused the
+rejection, or whether Express checks something else.
+
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
 Run it on the client computer on a private loopback connection only; never
