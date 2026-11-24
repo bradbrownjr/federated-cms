@@ -33,8 +33,8 @@ ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C',
 NAMESPACES = ('user', 'net', 'ipc', 'mnt')
 
 
-def run_checked(command, timeout):
-    process = subprocess.Popen(command, env=ENV, start_new_session=True)
+def run_checked(command, timeout, *, env=ENV):
+    process = subprocess.Popen(command, env=env, start_new_session=True)
     try:
         status = process.wait(timeout=timeout)
         if status:
@@ -58,7 +58,7 @@ def export_revision(checkout, revision, target, paths=()):
                    check=True, env=ENV, timeout=30)
 
 
-def stage_pat(binary, build):
+def stage_pat(binary, build, *, required_settings=()):
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError('Pat binary must be an executable file')
     staged = build / 'pat-lab'
@@ -71,6 +71,39 @@ def stage_pat(binary, build):
                 'build\tvcs.revision=' + PAT_REVISION}
     if not expected.issubset(lines):
         raise ValueError('Pat binary must contain clean build metadata for pinned revision ' + PAT_REVISION)
+
+    missing = [setting for setting in required_settings if 'build\t' + setting not in lines]
+    if missing:
+        raise ValueError('Pat binary missing required build settings: ' + ', '.join(missing))
+    return staged
+
+
+def build_gateway(source, build, config, cc, *, env=ENV):
+    flags = shlex.split(subprocess.check_output(['pkg-config', '--cflags', '--libs', 'libxml-2.0'], env=ENV, text=True))
+    (build / 'include').mkdir()
+    # The pinned headers include ../pathnames.h. Compile with this private
+    # generated include first; no file is written into upstream source.
+    names = {'RMSCONFIGFILE': 'gateway.conf', 'RMSVERSIONFILE': '.version_info',
+             'RMSBTEXTFILE': 'banner', 'CMSHOSTFILE': 'hosts', 'CHANNELFILE': 'channels',
+             'XMLCHANNELFILE': 'channels.xml', 'GWHELPFILE': 'gwhelp', 'ACIHELPFILE': 'acihelp',
+             'CMSSTATDIR': 'stat', 'CHANNELUPDATER': 'no-channel-updater',
+             'VERSIONUPDATER': 'no-version-updater', 'HOOKDIR': 'no-hooks'}
+    (build / 'pathnames.h').write_text(
+        f'#define LAB_CONFIG_DIR "{config}"\n'
+        + ''.join(f'#define {key} LAB_CONFIG_DIR "/{value}"\n' for key, value in names.items())
+    )
+    gateway = build / 'rmsgw-lab'
+    command = [cc, '-std=gnu11', '-D_GNU_SOURCE', '-DGWMONITOR',
+               '-I', str(build / 'include'), '-I', str(source / 'include'),
+               '-I', str(source / 'lib'),
+               *(str(source / 'rmsgw' / item) for item in RMSGW_SOURCES),
+               *(str(source / 'lib' / item) for item in LIB_SOURCES),
+               str(FIXTURES / 'lab_shims.c'),
+               '-Wl,--wrap=ftok', '-Wl,--wrap=stat',
+               '-Wl,--wrap=openlog', '-Wl,--wrap=closelog', '-Wl,--wrap=syslog',
+               *flags, '-lm', '-o', str(gateway)]
+    run_checked(command, timeout=120, env=env)
+    return gateway
 
 
 def main():
@@ -96,7 +129,6 @@ def main():
                                       'status', '--porcelain', '--untracked-files=all'], env=ENV, text=True)
     if status:
         raise RuntimeError('source checkout must be clean')
-    flags = shlex.split(subprocess.check_output(['pkg-config', '--cflags', '--libs', 'libxml-2.0'], env=ENV, text=True))
     host_namespaces = [os.readlink('/proc/self/ns/' + name) for name in NAMESPACES]
     with tempfile.TemporaryDirectory(prefix='fcms-rmsgw-full-', dir='/tmp') as directory:
         build = Path(directory)
@@ -113,29 +145,7 @@ def main():
             stage_pat(args.pat_binary.resolve(strict=True), build)
             cases.append('pat')
         config = build / 'config'
-        (build / 'include').mkdir()
-        # The pinned headers include ../pathnames.h. Compile with this private
-        # generated include first; no file is written into upstream source.
-        names = {'RMSCONFIGFILE': 'gateway.conf', 'RMSVERSIONFILE': '.version_info',
-                 'RMSBTEXTFILE': 'banner', 'CMSHOSTFILE': 'hosts', 'CHANNELFILE': 'channels',
-                 'XMLCHANNELFILE': 'channels.xml', 'GWHELPFILE': 'gwhelp', 'ACIHELPFILE': 'acihelp',
-                 'CMSSTATDIR': 'stat', 'CHANNELUPDATER': 'no-channel-updater',
-                 'VERSIONUPDATER': 'no-version-updater', 'HOOKDIR': 'no-hooks'}
-        (build / 'pathnames.h').write_text(
-            f'#define LAB_CONFIG_DIR "{config}"\n'
-            + ''.join(f'#define {key} LAB_CONFIG_DIR "/{value}"\n' for key, value in names.items())
-        )
-        gateway = build / 'rmsgw-lab'
-        command = [args.cc, '-std=gnu11', '-D_GNU_SOURCE', '-DGWMONITOR',
-                   '-I', str(build / 'include'), '-I', str(source / 'include'),
-                   '-I', str(source / 'lib'),
-                   *(str(source / 'rmsgw' / item) for item in RMSGW_SOURCES),
-                   *(str(source / 'lib' / item) for item in LIB_SOURCES),
-                   str(FIXTURES / 'lab_shims.c'),
-                   '-Wl,--wrap=ftok', '-Wl,--wrap=stat',
-                   '-Wl,--wrap=openlog', '-Wl,--wrap=closelog', '-Wl,--wrap=syslog',
-                   *flags, '-lm', '-o', str(gateway)]
-        run_checked(command, timeout=120)
+        build_gateway(source, build, config, args.cc)
         # Set loopback up only after unshare establishes the namespaces.
         # The case driver compares against these launcher-supplied IDs.
         for case in cases:
