@@ -27,8 +27,8 @@ def transport_login(request):
     return True
 
 
-def run_pat_exchange(binary, root, port, store, password):
-    """Compose and connect to the explicit loopback fixture. Return original upload."""
+def run_pat_exchange(binary, root, port, store, password, *, virtual_ax25=False):
+    """Compose and connect to the selected local lab transport. Return original upload."""
     env = os.environ.copy()
     for kind in ('CONFIG', 'DATA', 'STATE', 'CACHE'):
         path = root / kind.lower()
@@ -57,6 +57,8 @@ def run_pat_exchange(binary, root, port, store, password):
     assert b'Synthetic upload' in upload and UPLOAD_ATTACHMENT in upload
     mailbox_call(store, ACCOUNT, 'store_message', DOWNLOAD_MID, DOWNLOAD, 'out')
     url = f'telnet://N0CALL:lab-only@127.0.0.1:{port}/WL2K'
+    if virtual_ax25:
+        url = 'ax25+linux://pat/N0LAB-10'
     result = subprocess.run(options + ['connect', url], stdin=subprocess.DEVNULL, text=True,
                             capture_output=True, env=env, timeout=30)
     if result.returncode:
