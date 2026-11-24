@@ -25,7 +25,12 @@ def diagnostic_validate(raw):
             pos = sum(sizes) + max(0, len(sizes) - 1) * 2
             trailing = content[pos:]
             print(f'Section diagnostic: sections={len(sizes)} trailing_bytes={len(trailing)} '
-                  f'only_crlf={all(byte in (10, 13) for byte in trailing)}',
+                  f'only_crlf={all(byte in (10, 13) for byte in trailing)} '
+                  f'starts_crlf={trailing.startswith(bytes((13, 10)))} '
+                  f'ends_crlf={trailing.endswith(bytes((13, 10)))} '
+                  f'starts_nul={trailing.startswith(bytes((0,)))} '
+                  f'ends_nul={trailing.endswith(bytes((0,)))} '
+                  f'last_section_zero={bool(sizes and sizes[-1] == 0)}',
                   file=sys.stderr, flush=True)
         raise
 
