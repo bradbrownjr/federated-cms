@@ -146,6 +146,17 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
                 main()
             run.assert_not_called()
 
+    def test_invalid_ack_delay_does_not_open_connections(self):
+        for delay in ('0', '11', 'nan'):
+            argv = ['kiss_lab', '--kiss-host', '127.0.0.1', '--kiss-port', '1234',
+                    '--station', 'N0LAB-10', '--peer', 'N0CALL', '--enable-tx',
+                    '--ack-delay', delay]
+            with self.subTest(delay=delay), patch.object(sys, 'argv', argv), \
+                    patch('federated_cms.kiss_lab.run_lab') as run:
+                with self.assertRaises(SystemExit):
+                    main()
+                run.assert_not_called()
+
     def test_timeout_is_reported_without_a_traceback(self):
         argv = ['kiss_lab', '--kiss-host', '127.0.0.1', '--kiss-port', '1234',
                 '--station', 'N0LAB-10', '--peer', 'N0CALL', '--enable-tx']

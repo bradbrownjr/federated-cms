@@ -14,6 +14,7 @@ import sys
 import time
 
 from kissterm.ax25.address import AX25Address
+from kissterm.ax25.session import LinkParams
 from kissterm.ax25.station import AX25Station
 from kissterm.transport.base import SessionState, TransportState
 from kissterm.transport.tcp_kiss import TcpKissTransport
@@ -161,6 +162,9 @@ async def bridge(link, b2f_port: int, finished: asyncio.Event):
 async def run_lab(args):
     if not getattr(args, 'enable_tx', False):
         raise ValueError('explicit transmit authorization is required')
+    ack_delay = getattr(args, 'ack_delay', 1.0)
+    if not 0.1 <= ack_delay <= 10:
+        raise ValueError('acknowledgment delay must be between 0.1 and 10 seconds')
     station_addr = address(args.station)
     peer = address(args.peer)
     if (station_addr.callsign, station_addr.ssid) == (peer.callsign, peer.ssid):
@@ -180,7 +184,7 @@ async def run_lab(args):
     task = None
     try:
         await transport.open()  # gate is closed before opening the modem connection
-        station = AX25Station(station_addr, transport, max_links=1)
+        station = AX25Station(station_addr, transport, params=LinkParams(t2=ack_delay), max_links=1)
 
         def accepted(link):
             nonlocal task
@@ -227,6 +231,7 @@ def main():
     parser.add_argument('--b2f-port', type=int, default=63191)
     parser.add_argument('--seconds', type=int, default=300)
     parser.add_argument('--max-frames', type=int, default=500)
+    parser.add_argument('--ack-delay', type=float, default=1.0, help='experimental AX.25 T2 in seconds (0.1 to 10)')
     parser.add_argument('--check-only', action='store_true', help='connect and close without sending data')
     parser.add_argument('--enable-tx', action='store_true', help='explicitly enable lab transmission')
     args = parser.parse_args()
@@ -236,7 +241,7 @@ def main():
         parser.error('the lab requires explicit --enable-tx; no connection was opened')
     if not (1 <= args.kiss_port <= 65535 and 1 <= args.b2f_port <= 65535
             and 0 <= args.channel <= 15 and 1 <= args.seconds <= 3600
-            and 1 <= args.max_frames <= 5000):
+            and 1 <= args.max_frames <= 5000 and 0.1 <= args.ack_delay <= 10):
         parser.error('port, channel or lab limits are out of range')
     try:
         local, peer = address(args.station), address(args.peer)

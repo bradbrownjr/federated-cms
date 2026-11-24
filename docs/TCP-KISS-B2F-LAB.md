@@ -125,6 +125,9 @@ does not establish cause; radio losses, turnaround and sender timers also need
 to be controlled in a comparison. A separate trace supplied by the operator
 shows retries with another gateway, but differs in station, session and client
 version, so it is not a controlled benchmark.
+The opt-in bridge accepts `--ack-delay` (seconds, 0.1 to 10) for controlled
+T2 experiments. The default remains one second; changing this timer is not a
+general performance recommendation, and polls still receive prompt replies.
 
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
