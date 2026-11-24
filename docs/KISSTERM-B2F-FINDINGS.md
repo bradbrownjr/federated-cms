@@ -1,6 +1,8 @@
 # Existing B2F interoperability evidence from kissterm
 
-**Status:** source-backed research findings; no new live tests performed.
+**Status:** historical source-backed findings. No new live Winlink tests
+were performed for this document. For subsequent offline laboratory results,
+see the [compatibility matrix](WINLINK-INTEROPERABILITY.md).
 
 Source: https://github.com/bradbrownjr/kissterm
 
@@ -25,13 +27,19 @@ These findings support that the observed production restriction is a **client id
 
 ## Important technical distinctions
 
-- The implementation in kissterm is a **client**, not a CMS/RMS server. A server-side counterpart must still be built and validated.
+- The implementation in kissterm is a **client**, not a CMS/RMS server. An
+  independent B2F laboratory server has since been built and tested offline;
+  it is not a production CMS.
 - Published Open B2F describes client ↔ RMS sessions; gateway ↔ CMS behavior is a separate research task.
 - A successful message download from the experimental CMS does not prove outgoing Internet mail delivery or complete feature compatibility.
 - The documented Winlink documents differ in details (speaker order, MIME description, block size and resume behavior). Use kissterm's `docs/PROTOCOL_GUIDE.md` as the discrepancy register and verify unresolved points with test fixtures.
 - Do not modify kissterm merely to advance this project. Use its existing tests and fixtures as reference data, respecting MIT licensing and attribution.
 
-## Revised immediate experiment
+## Originally proposed experiment
+
+This list records the research plan at the time of the source review. The
+current matrix tracks what later offline work has demonstrated and what
+remains open.
 
 1. Build a **minimal independent B2F server** that sends a server SID and challenge, accepts kissterm's own SID, and handles a test mailbox with one inbound and one outbound message.
 2. Test with kissterm's existing client-side state machine and captured/fixture-driven cases, entirely offline.
