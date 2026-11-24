@@ -163,3 +163,28 @@ Linux build. The gateway uses the lab build paths and shims described above.
 RF and AX.25, stock installed gateway binaries, other gateway revisions, and
 production authentication remain unverified by this experiment.
 [Reproduce the five namespace cases](../tests/rmsgw_full/README.md).
+
+## Exploratory virtual AX.25 guest
+
+In a separate local experiment, a disposable Debian 6.12.118 kernel ran in a
+QEMU TCG guest with no network device, shared filesystem, or device passthrough.
+Two pseudo-terminal KISS interfaces formed a software link. Pat CLI at pinned
+commit `2ad31e8` connected using Linux AX.25; guest `ax25d` accepted a
+connected `AF_AX25` / `SOCK_SEQPACKET` socket and launched the pinned lab
+build of `rmsgw`. The gateway reached the synthetic SGL adapter and shared B2F
+mailbox within the guest. The test observed AX.25 connection and data frames,
+verified synthetic messages and binary attachments in both directions, and
+reopened SQLite to check the upload and delivery acknowledgement.
+
+Separate guest runs used kissterm's AX.25 implementation and TCP KISS
+transport against the guest's virtual KISS bridge. A positive exchange
+verified messages, attachments and reopened mailbox state; another run
+verified that a wrong B2F mailbox secret was rejected and pending mail remained
+unchanged. The guest gateway side still used a kernel AX.25 socket and `ax25d`.
+
+The guest runner was assembled as an exploratory local fixture and is not yet
+included in the repository or CI; these runs are not a repeatable release
+test. They used no radio, TNC or production credentials, and do not establish
+compatibility with stock installed gateways or real RF links. A first fixture
+attempt was rejected by an `ax25d` rule and was corrected before the passing
+run. Clean disconnect and operational robustness need further testing.
