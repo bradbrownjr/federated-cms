@@ -100,6 +100,13 @@ contained the upload with both declared attachments and no pending outgoing
 messages. The operator also opened the downloaded synthetic text attachment
 in Express and confirmed that its contents matched the sent fixture.
 
+The one-session `tests.radio_sid_relay` is a loopback-only, experimental SID
+adapter for a physical-modem trial. It substitutes the observed `W` SID for
+the lab SID while passing the remaining stream through to the lab. It does
+not establish support for every capability that a client may associate with
+`W`. Pair it only with the operator-controlled KISS bridge and synthetic lab
+mail; it is not a production gateway or a connection to Winlink servers.
+
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
 Run it on the client computer on a private loopback connection only; never
