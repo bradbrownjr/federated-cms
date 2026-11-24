@@ -115,6 +115,13 @@ on failure. A missing archive, checksum mismatch, missing revision or failed
 namespace prevents boot. A timeout, exception or missing case assertion fails
 the run. Each successful boot prints its own `PASS` line on the host.
 
+The launcher prints the compressed initramfs SHA-256 before boot. It uses
+the pinned rmsgw commit time for the compiled banner date and normalizes
+archive timestamps, owners and modes. Two separate builds of this revision
+with the same local inputs (including the same Pat binary) and host compiler,
+under umasks 002 and 077, produced the same image. Native toolchain changes
+or different Pat build paths can change the image digest.
+
 The launcher sets up QEMU TCG inside fresh host user, network and IPC
 namespaces with no NIC, disks, host shares or device passthrough. The only
 guest-to-host console is QEMU's serial output. Guest init loads the AX.25

@@ -138,10 +138,13 @@ def initramfs(root, output):
         for inode, path in enumerate(sorted(root.rglob('*')), 3):
             mode = path.lstat().st_mode
             if stat.S_ISLNK(mode):
+                mode = stat.S_IFLNK | 0o777
                 data = os.fsencode(os.readlink(path))
             elif stat.S_ISREG(mode):
+                mode = stat.S_IFREG | (0o755 if mode & 0o111 else 0o644)
                 data = path.read_bytes()
             elif stat.S_ISDIR(mode):
+                mode = stat.S_IFDIR | (0o1777 if path == root / 'tmp' else 0o755)
                 data = b''
             else:
                 raise ValueError(f'unexpected object in guest: {path}')
@@ -156,7 +159,9 @@ def stage(args, build):
     gateway.export_revision(args.source.resolve(strict=True), gateway.REVISION, source)
     gateway.export_revision(args.kissterm_source.resolve(strict=True), gateway.KISSTERM_REVISION,
                             build / 'reference', ('kissterm',))
-    binary = gateway.build_gateway(source, build, Path('/lab/case'), 'cc')
+    # Upstream greet.c embeds __DATE__. Use its pinned Git commit timestamp.
+    binary = gateway.build_gateway(source, build, Path('/lab/case'), 'cc',
+                                   env=dict(ENV, SOURCE_DATE_EPOCH='1784557462'))
     packages = unpack_packages(args.packages, build)
     root = build / 'guest'
     for directory in ('bin', 'proc', 'sys', 'tmp', 'etc/ax25', 'lab/modules'):
@@ -192,7 +197,9 @@ def stage(args, build):
     (root / 'etc/ax25/ax25d.conf').write_text(
         '[N0LAB-10 VIA radio]\nN0CALL * * * * * * - root /lab/enter.py enter -P %d %U\n'
         'default * * * * * * L\n')
-    initramfs(root, build / 'guest.cpio.gz')
+    archive = build / 'guest.cpio.gz'
+    initramfs(root, archive)
+    print(f'Guest initramfs SHA-256 {digest(archive)}', flush=True)
     return packages
 
 
@@ -236,6 +243,11 @@ def boot(case, packages, build, log):
     verify_log(case, log.read_text(errors='replace'))
 
 
+def terminate(signum, _frame):
+    # Unwind the active QEMU process group and the private temporary directory.
+    raise SystemExit(128 + signum)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ('source', 'kissterm-source', 'pat-binary', 'packages'):
@@ -247,6 +259,7 @@ def main():
         parser.error('run as an unprivileged Linux user')
     if subprocess.check_output(['dpkg', '--print-architecture'], env=ENV, text=True).strip() != 'amd64':
         parser.error('the pinned Debian amd64 runtime is required')
+    signal.signal(signal.SIGTERM, terminate)
     with tempfile.TemporaryDirectory(prefix='fcms-ax25-') as scratch:
         build = Path(scratch)
         packages = stage(args, build)

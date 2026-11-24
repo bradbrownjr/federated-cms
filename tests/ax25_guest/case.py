@@ -16,6 +16,7 @@ from federated_cms.store import SQLiteStore
 from tests.pat_fixture import run_pat_exchange, verify_pat_exchange
 from tests.rmsgw_full.sgl_adapter import GATEWAY_PASSWORD, MAILBOX_PASSWORD, serve_gateway
 
+
 def config(root, address):
     (root / 'stat').mkdir(parents=True)
     (root / '.version_info').write_text('PACKAGE=RMSLAB\nPROGRAM=RMSGW\nLABEL=TEST\n')
@@ -45,7 +46,6 @@ def attach(name, cleanup):
     print(output.strip())
     subprocess.run(['/lab/kissparms', '-p', name, '-c', '1'], check=True, timeout=5)
     return master
-
 
 
 def bridge(first, second, stopped, released):

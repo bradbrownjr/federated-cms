@@ -33,8 +33,8 @@ ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C',
 NAMESPACES = ('user', 'net', 'ipc', 'mnt')
 
 
-def run_checked(command, timeout):
-    process = subprocess.Popen(command, env=ENV, start_new_session=True)
+def run_checked(command, timeout, *, env=ENV):
+    process = subprocess.Popen(command, env=env, start_new_session=True)
     try:
         status = process.wait(timeout=timeout)
         if status:
@@ -78,7 +78,7 @@ def stage_pat(binary, build, *, required_settings=()):
     return staged
 
 
-def build_gateway(source, build, config, cc):
+def build_gateway(source, build, config, cc, *, env=ENV):
     flags = shlex.split(subprocess.check_output(['pkg-config', '--cflags', '--libs', 'libxml-2.0'], env=ENV, text=True))
     (build / 'include').mkdir()
     # The pinned headers include ../pathnames.h. Compile with this private
@@ -102,7 +102,7 @@ def build_gateway(source, build, config, cc):
                '-Wl,--wrap=ftok', '-Wl,--wrap=stat',
                '-Wl,--wrap=openlog', '-Wl,--wrap=closelog', '-Wl,--wrap=syslog',
                *flags, '-lm', '-o', str(gateway)]
-    run_checked(command, timeout=120)
+    run_checked(command, timeout=120, env=env)
     return gateway
 
 
