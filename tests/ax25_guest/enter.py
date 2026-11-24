@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Check ax25d's connected stdin/stdout before executing the real gateway."""
+"""Check the AX.25 socket and record the gateway child's exit status."""
 import ctypes
 import os
 import signal
@@ -31,4 +31,21 @@ radio.detach()
 # CPython ignores SIGPIPE on startup. ax25d launches native services with
 # the default disposition, which this descriptor-check wrapper must preserve.
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-os.execv('/lab/rmsgw-lab', ['rmsgw-lab', *sys.argv[1:]])
+# ax25d ignores SIGCHLD; restore it for the monitor, but preserve the
+# inherited disposition in the gateway itself.
+inherited_sigchld = signal.getsignal(signal.SIGCHLD)
+signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+pid = os.fork()
+if pid == 0:
+    signal.signal(signal.SIGCHLD, inherited_sigchld)
+    os.execv('/lab/rmsgw-lab', ['rmsgw-lab', *sys.argv[1:]])
+
+# The monitor must not keep the AX.25 stream open while the gateway exits.
+os.close(0)
+os.close(1)
+_, status = os.waitpid(pid, 0)
+code = os.waitstatus_to_exitcode(status)
+with open('/lab/case/gateway-exit.tmp', 'x', encoding='ascii') as result:
+    result.write(f'{code}\n')
+os.replace('/lab/case/gateway-exit.tmp', '/lab/case/gateway-exit')
+print(f'GATEWAY EXIT {code}', file=sys.stderr, flush=True)

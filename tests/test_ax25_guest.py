@@ -72,12 +72,17 @@ class AX25GuestTests(unittest.TestCase):
                 'KISS N0CALL > N0LAB-10 port=0 SABM', 'KISS N0LAB-10 > N0CALL port=0 UA',
                 'KISS N0CALL > N0LAB-10 port=0 I', 'KISS N0LAB-10 > N0CALL port=0 I',
                 outcome, 'Observed DISC and answering UA', 'Stopped ax25d before KISS port teardown',
+                'Observed gateway exit status 0',
                 f'FCMS AX25 PASS {case}',
             ]
             verify_log(case, '\n'.join(lines))
+            verify_log(case, '\n'.join(
+                'Observed gateway exit status -13' if line == 'Observed gateway exit status 0' else line
+                for line in lines))
             for index, marker in enumerate(lines):
                 with self.subTest(case=case, missing=marker), self.assertRaises(RuntimeError):
                     verify_log(case, '\n'.join(lines[:index] + lines[index + 1:]))
-            for error in (lines[0], 'Exception in thread relay', 'accept error Invalid argument'):
+            for error in (lines[0], 'Observed gateway exit status -13',
+                          'Exception in thread relay', 'accept error Invalid argument'):
                 with self.subTest(case=case, extra=error), self.assertRaises(RuntimeError):
                     verify_log(case, '\n'.join([*lines, error]))

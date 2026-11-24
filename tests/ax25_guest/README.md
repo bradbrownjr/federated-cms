@@ -137,7 +137,11 @@ not sandbox the host filesystem. Each boot exercises one caller, one session
 and one exchange or rejection. The host log records frame categories and
 fixture shutdown. CPython ignores SIGPIPE at interpreter startup, so the
 descriptor-check wrapper restores SIG_DFL immediately before executing
-rmsgw. The gateway can terminate on SIGPIPE during sign-off. A passing
-exchange verifies the mailbox, link release and listener shutdown. Measuring
-the individual gateway process exit status requires a separate traced run. See the [full rmsgw harness](../rmsgw_full/README.md)
+rmsgw. A laboratory-only parent process closes its copies of the AX.25 socket,
+waits for the gateway and reports its exit status; this adds a monitoring
+process to the normal `ax25d` launch context. The test accepts exit status zero
+or termination by SIGPIPE, and fails on any other or missing status. In one
+local run each of the three cases terminated the gateway with SIGPIPE even
+though message or rejection checks, AX.25 release and fixture shutdown passed.
+These results do not establish clean gateway shutdown. See the [full rmsgw harness](../rmsgw_full/README.md)
 for the gateway build shims and licence information.
