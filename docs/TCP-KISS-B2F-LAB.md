@@ -107,6 +107,16 @@ not establish support for every capability that a client may associate with
 `W`. Pair it only with the operator-controlled KISS bridge and synthetic lab
 mail; it is not a production gateway or a connection to Winlink servers.
 
+On 2026-11-24, the operator ran one low-power direct radio session between
+Express Packet Winlink and this lab through two sound modems using that SID
+adapter. Express reported a synthetic attachment upload and download and a
+clean disconnect. A new database connection confirmed the upload, containing
+two attachments, and no pending outbound message. Express reported 2,153
+upload bytes in 88 seconds. The operator's monitor showed retransmitted I
+frames and REJ responses during the upload; the source of the retransmissions
+has not yet been determined. The lab log confirmed the final DISC/UA. This is
+one physical-radio experiment, not general compatibility or throughput proof.
+
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
 Run it on the client computer on a private loopback connection only; never
