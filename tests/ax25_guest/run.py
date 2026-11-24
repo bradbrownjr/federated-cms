@@ -210,6 +210,8 @@ def verify_log(case, output):
                'KISS N0CALL > N0LAB-10 port=0 SABM', 'KISS N0LAB-10 > N0CALL port=0 UA',
                'KISS N0CALL > N0LAB-10 port=0 I', 'KISS N0LAB-10 > N0CALL port=0 I']
     if (not all(lines.count(marker) == 1 for marker in markers)
+            or sum(line in ('Observed gateway exit status 0', 'Observed gateway exit status -13')
+                   for line in lines) != 1
             or not any(line.startswith(CASES[case]) for line in lines)
             or any(error in output for error in ('FCMS AX25 FAIL', 'Traceback (most recent call last)',
                                                  'Exception in thread', 'accept error', 'Kernel panic'))):

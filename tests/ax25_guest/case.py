@@ -184,6 +184,16 @@ def main():
                 ('N0CALL', 'I'), ('N0LAB-10', 'I')} <= frames, frames
         assert released.is_set(), 'missing AX.25 release handshake'
         print('Observed DISC and answering UA')
+        deadline = time.monotonic() + 10
+        result = root / 'gateway-exit'
+        while not result.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not result.exists():
+            raise RuntimeError('gateway exit status was not observed')
+        code = int(result.read_text(encoding='ascii').strip())
+        if code not in (0, -signal.SIGPIPE):
+            raise RuntimeError(f'unexpected gateway exit status: {code}')
+        print(f'Observed gateway exit status {code}')
 
 
 if __name__ == '__main__':

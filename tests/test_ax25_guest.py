@@ -72,6 +72,7 @@ class AX25GuestTests(unittest.TestCase):
                 'KISS N0CALL > N0LAB-10 port=0 SABM', 'KISS N0LAB-10 > N0CALL port=0 UA',
                 'KISS N0CALL > N0LAB-10 port=0 I', 'KISS N0LAB-10 > N0CALL port=0 I',
                 outcome, 'Observed DISC and answering UA', 'Stopped ax25d before KISS port teardown',
+                'Observed gateway exit status 0',
                 f'FCMS AX25 PASS {case}',
             ]
             verify_log(case, '\n'.join(lines))
