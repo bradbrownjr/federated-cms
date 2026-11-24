@@ -128,6 +128,12 @@ version, so it is not a controlled benchmark.
 The opt-in bridge accepts `--ack-delay` (seconds, 0.1 to 10) for controlled
 T2 experiments. The default remains one second; changing this timer is not a
 general performance recommendation, and polls still receive prompt replies.
+In one subsequent over-air comparison, a six-second T2 did not complete the
+roughly 2 KB compressed upload; repeated windows and REJs continued and the
+session disconnected. The lab database contained no complete upload and kept
+the download pending. The bridge ended with a timeout, but this observation
+does not identify which timer or radio condition caused the failure. Do not
+interpret the longer T2 as an improvement or use it as a new default.
 
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
