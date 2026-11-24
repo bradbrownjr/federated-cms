@@ -157,3 +157,9 @@ preserving the previous signal mask and already-pending SIGPIPE. It is a
 research patch for this pinned revision, not a production gateway release.
 The optional `tests.test_rmsgw_final_notices` test exercises both socket and
 pipe disconnects and preservation of a pre-existing pending signal.
+
+In one local run, the patched gateway exited zero for all three cases while
+their exchange or rejection, persistence, and AX.25 release checks passed.
+A separate run of the unmodified pinned source recorded SIGPIPE in all three.
+The opt-in patch covers only these final notices; other gateway writes and
+production environments have not been validated by this experiment.
