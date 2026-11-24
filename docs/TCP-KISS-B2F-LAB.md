@@ -161,6 +161,16 @@ recommends `ACKMODE` for most SoundModem setups. These screenshots do not prove
 why the observed retries occurred, and NORMAL/ACKMODE must be compared in
 controlled sessions before drawing a conclusion.
 
+One subsequent physical-radio trial used the same previously unsuccessful
+upload with Express set to ACKMODE and the lab T2 returned to one second.
+Express reported a 2,109-byte upload in 44 seconds and downloaded one
+synthetic attachment message; the trace showed no repeated upload windows and
+the lab observed the final DISC/UA. A newly opened database connection found
+the uploaded message and both attachments, and the download was no longer
+pending. This favorable result supports further ACKMODE testing but is a
+single comparison with uncontrolled radio conditions, not a proven cause or
+general throughput guarantee.
+
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
 Run it on the client computer on a private loopback connection only; never
