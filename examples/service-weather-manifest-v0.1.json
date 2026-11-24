@@ -1,0 +1,33 @@
+{
+  "catalog_version": "0.1",
+  "service_id": "weather.forecast",
+  "provider_node": "node-bpq-1",
+  "revision": 1,
+  "published_at": "2026-11-23T22:00:00Z",
+  "expires_at": "2026-11-24T22:00:00Z",
+  "display": {
+    "title": "Synthetic local weather",
+    "category": "weather",
+    "description": "Deterministic offline forecast fixture; no live weather data."
+  },
+  "request": {
+    "operation": "forecast",
+    "parameters": [
+      {
+        "name": "grid",
+        "type": "maidenhead",
+        "required": true
+      }
+    ],
+    "response_media_type": "text/plain; charset=utf-8",
+    "max_response_bytes": 1024
+  },
+  "cache": {
+    "ttl_seconds": 900,
+    "stale_allowed": true
+  },
+  "access": {
+    "policy": "public_test",
+    "suggested_max_requests_per_hour": 30
+  }
+}
