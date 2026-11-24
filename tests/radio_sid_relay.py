@@ -63,7 +63,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=63195)
     parser.add_argument('--b2f-port', type=int, required=True)
-    parser.add_argument('--seconds', type=int, default=600, choices=range(1, 601), metavar='1..600')
+    parser.add_argument('--seconds', type=int, default=600, choices=range(1, 3601), metavar='1..3600')
     args = parser.parse_args()
     try:
         asyncio.run(run(args.port, args.b2f_port, args.seconds))
