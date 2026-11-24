@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 from datetime import UTC, datetime
 import re
+import sys
 import time
 
 from kissterm.ax25.address import AX25Address
@@ -243,15 +244,19 @@ def main():
             parser.error('station and peer must have distinct AX.25 addresses')
     except ValueError as exc:
         parser.error(str(exc))
-    if args.check_only:
-        asyncio.run(check_kiss_connection(args.kiss_host, args.kiss_port))
-        print('TCP KISS endpoint reachable; no data sent.', flush=True)
-        return
     try:
+        if args.check_only:
+            asyncio.run(check_kiss_connection(args.kiss_host, args.kiss_port))
+            print('TCP KISS endpoint reachable; no data sent.', flush=True)
+            return 0
         asyncio.run(run_lab(args))
     except KeyboardInterrupt:
-        pass
+        return 130
+    except (OSError, TimeoutError, ValueError) as exc:
+        print(f'Lab stopped: {exc}', file=sys.stderr, flush=True)
+        return 1
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

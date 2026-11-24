@@ -1,6 +1,6 @@
 """Offline TCP KISS, real AX.25 and B2F laboratory integration."""
 import asyncio
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
 import os
@@ -67,6 +67,16 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SystemExit):
                 main()
             run.assert_not_called()
+
+    def test_timeout_is_reported_without_a_traceback(self):
+        argv = ['kiss_lab', '--kiss-host', '127.0.0.1', '--kiss-port', '1234',
+                '--station', 'N0LAB-10', '--peer', 'N0CALL', '--enable-tx']
+        output = io.StringIO()
+        with (patch.object(sys, 'argv', argv), redirect_stderr(output),
+              patch('federated_cms.kiss_lab.run_lab', new=Mock(return_value=object())),
+              patch('federated_cms.kiss_lab.asyncio.run', side_effect=TimeoutError('limit reached'))):
+            self.assertEqual(main(), 1)
+        self.assertEqual(output.getvalue().strip(), 'Lab stopped: limit reached')
 
     async def test_filters_other_sources_channels_and_digipeaters(self):
         station, peer = AX25Address.parse('N0LAB-10'), AX25Address.parse('N0CALL')
