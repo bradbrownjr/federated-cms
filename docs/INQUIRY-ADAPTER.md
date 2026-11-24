@@ -39,8 +39,29 @@ case-insensitive on the whole local part.
 - A body with no items and no rejected lines is an `InquiryError`.
 
 `;` handling and case-insensitive IDs come from user reports, not Winlink
-documentation. Winlink's reply format (From, Subject, body or attachment) is
-not yet known; a captured reply from the production system will define it.
+documentation.
+
+### Observed exchange (production CMS, 2026-11-24)
+
+Winlink Express 1.8.6.0 over Telnet to `cms.winlink.org`, operator's own
+account:
+
+- **Request:** `To: INQUIRY` (no domain), `Subject: REQUEST`, body
+  `ME_ZON_YORKC`, 142 bytes uncompressed.
+- **Reply:** arrived on the next connection about a minute later. One message
+  for one item.
+  - `From: SERVICE`. The B2F proposal names the sender as `SERVICE@winlink.org`,
+    and Express shows `Source: SYSTEM`.
+  - `Subject: INQUIRY - https://tgftp.nws.noaa.gov/data/forecasts/zone/me/mez023.txt`.
+    The catalog ID resolves to a source URL, and the subject names the URL,
+    not the ID.
+  - Body: the fetched NWS text unchanged, followed by a Winlink footer. The
+    unchanged text includes product lines such as `Expires:202611251200;;874602`
+    and the `$$` terminator. 1,962 bytes uncompressed, 935 compressed; no
+    attachment.
+
+So a catalog entry is an ID mapped to a source. Our server answers from
+`SERVICE`, one reply per item, with the extracted text as the body.
 
 ## Position report (`QTH`)
 

@@ -57,6 +57,12 @@ class InquiryTests(unittest.TestCase):
         ])
         self.assertEqual(request.rejected, ())
 
+    def test_observed_express_request(self):
+        # Winlink Express 1.8.6.0 to production CMS, 2026-11-24 (see doc).
+        self.assertEqual(service_for("INQUIRY"), "INQUIRY")
+        request = parse_inquiry("REQUEST", "ME_ZON_YORKC\r\n")
+        self.assertEqual(self.kinds(request), [("catalog", "ME_ZON_YORKC")])
+
     def test_subject_forms(self):
         for subject in ("REQUEST", "request", "  Request  ", "//WL2K REQUEST", "//wl2k request"):
             with self.subTest(subject=subject):
