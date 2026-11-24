@@ -1,10 +1,36 @@
 """Local lab server with fixed, payload-free receive error categories."""
 import sys
+import re
 
 from federated_cms import b2f
 from federated_cms.b2_message import B2MessageError
 
 read_message = b2f.Session.read_message
+validate_message = b2f.validate_message
+
+
+def diagnostic_validate(raw):
+    try:
+        return validate_message(raw)
+    except B2MessageError as exc:
+        if str(exc) == 'unexpected B2 trailing data' and b'\r\n\r\n' in raw:
+            header, content = raw.split(b'\r\n\r\n', 1)
+            sizes = []
+            for line in header.split(b'\r\n'):
+                name, _, value = line.partition(b':')
+                if name.lower() in (b'body', b'file'):
+                    token = value.strip().split(b' ', 1)[0]
+                    if re.fullmatch(rb'[0-9]{1,6}', token):
+                        sizes.append(int(token))
+            pos = sum(sizes) + max(0, len(sizes) - 1) * 2
+            trailing = content[pos:]
+            print(f'Section diagnostic: sections={len(sizes)} trailing_bytes={len(trailing)} '
+                  f'only_crlf={all(byte in (10, 13) for byte in trailing)}',
+                  file=sys.stderr, flush=True)
+        raise
+
+
+b2f.validate_message = diagnostic_validate
 
 
 def diagnostic_read_message(self, *args):
