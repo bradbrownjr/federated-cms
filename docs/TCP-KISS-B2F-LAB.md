@@ -61,6 +61,15 @@ An operator-supplied successful Packet Winlink reference session displayed
 differ. This comparison alone does not establish which difference caused the
 rejection, or whether Express checks something else.
 
+In a subsequent virtual TCP KISS experiment with Express 1.8.0.0, the
+reference SID and `[FCMS-0.1-B2FWIHJM$]` both led to a client handshake.
+The otherwise identical pair `[FCMS-0.1-B2FWHM$]` and
+`[FCMS-0.1-B2FHM$]` respectively led to a handshake and a peer-to-peer/SID
+rejection. This indicates `W` controls that decision in the tested version
+and setup; it does not establish full protocol interoperability or define the
+complete semantics of that feature. These comparisons used a probe without a
+challenge, authentication, mailbox or radio.
+
 For controlled identifier experiments, `python -m tests.sid_probe --sid
 '[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
 Run it on the client computer on a private loopback connection only; never

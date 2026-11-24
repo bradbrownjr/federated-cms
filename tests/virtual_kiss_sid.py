@@ -55,6 +55,10 @@ async def run(host, port, sid, station, peer, seconds=300):
             raise TimeoutError('no completed session')
         for task in done:
             task.result()
+        if tasks[0] in done and not tasks[1].done():
+            # Give the station time to deliver AX.25 DISC before stopping the
+            # virtual KISS link.  Do not leave the diagnostic running forever.
+            await asyncio.wait_for(tasks[1], 10)
         print('SID probe finished; no mailbox or authentication was used.', flush=True)
     finally:
         for task in tasks:
