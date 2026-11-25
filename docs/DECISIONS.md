@@ -28,6 +28,13 @@ The M0 [technology matrix](TECHNOLOGY-MATRIX.md), [versioned request envelope](R
 - Application provider API and cache sharing.
 - Winlink client compatibility boundaries.
 
+## Known external constraints
+
+- Winlink's production CMS accepts only client programs it recognises by SID
+  name, directly or through an RMS gateway; its API needs an issued access key.
+  Any node feature that connects to Winlink's servers needs that recognition
+  first. See [kissterm findings](KISSTERM-B2F-FINDINGS.md#access-to-winlinks-own-servers).
+
 ## Non-negotiable limitations
 
 No system can fetch fresh Internet data from a partition with no egress or usable cached data. Delivery across disconnected partitions cannot be guaranteed without eventual connectivity. RF cryptography and content require jurisdiction-specific review. Internet fetch services must not become unrestricted proxies.

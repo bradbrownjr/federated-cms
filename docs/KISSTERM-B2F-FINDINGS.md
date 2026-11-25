@@ -6,6 +6,36 @@ see the [compatibility matrix](WINLINK-INTEROPERABILITY.md).
 
 Source: https://github.com/bradbrownjr/kissterm
 
+## Access to Winlink's own servers
+
+- **The production CMS accepts only client programs it recognises,** by the
+  program name in the client's SID. An independent client is refused with
+  "Unknown client types are not allowed on production servers -- use
+  cms-z.winlink.org", over the Internet (2026-09-28) and through an RMS
+  gateway alike (WS1EC-10, 2026-10-07): the gateway makes its own connection
+  to the production servers, so the client cannot get around the check by
+  going over the radio.
+- **The test server, `cms-z.winlink.org`, accepts the same client** with the
+  same login (2026-10-02). The refusal is the client-name check alone, not
+  the protocol or the login.
+- **How a program becomes known is not published.** The Open B2F
+  specification names no developer registry; the request goes to the Winlink
+  Development Team.
+- **Winlink's API needs an access key** issued to the program by a Winlink
+  administrator (kissterm's RMS gateway list, 2026-09-27).
+- **The CMS keyboard prompt needs no client name,** but it is a person
+  reading mail, not B2F Send/Receive, and the CMS discourages automating it
+  (2026-11-18).
+- **No program borrows another program's SID name** to pass the check.
+
+So Pat, kissterm or any other client works with Winlink's production servers
+only once Winlink knows its name, while any B2F client can connect to a
+Federated CMS node, which runs no such check. Anything a node does with
+Winlink's servers as a client or gateway needs the same recognition. Plain
+Internet email to `CALL@winlink.org` does not, subject to each user's accept
+list. Sources: kissterm `docs/ROADMAP.md` (Blockers), `docs/GUIDE.md`,
+`docs/PROTOCOL_GUIDE.md` ("Client identity").
+
 ## Reusable code and documentation
 
 - `kissterm/winlink/b2f.py`: pure client-side B2F state machine, transport independent; handshake, proposal exchange, framing, checksums, delivery events.
@@ -22,6 +52,7 @@ Source: https://github.com/bradbrownjr/kissterm
 2. **2026-10-02:** experimental CMS at `cms-z.winlink.org` accepted `[kissterm-0.1.349-B2FHM$]`, negotiated secure login, and delivered a real message with MID `ED1VSIAJZVYF`, filed by kissterm. Source: kissterm `docs/ROADMAP.md`, transcript `20261002-134724_KC1JMH_WL2K.log` as referenced there.
 3. **2026-10-07:** production CMS refused the same unrecognized client type through RMS WS1EC-10. Source: kissterm `docs/ROADMAP.md`, cited session logs.
 4. **2026-11-18:** CMS keyboard mode accepted interactive commands without a client SID; this is not a substitute for binary B2F. Source: kissterm `docs/ROADMAP.md`.
+5. **2026-09-27:** the Winlink API used for the RMS gateway list needs an access key issued to the program by a Winlink administrator. Source: kissterm `docs/ROADMAP.md`.
 
 These findings support that the observed production restriction is a **client identifier policy** in addition to protocol compatibility. They do **not** prove that an independent RMS-to-CMS protocol is documented, nor that arbitrary third-party clients can access the production system.
 
