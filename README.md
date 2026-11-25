@@ -1,6 +1,19 @@
-# Federated CMS (research)
+# Federated CMS
 
-**Status: exploratory research. No production network or protocol is claimed.**
+**Status: research and laboratory prototype; not ready for production use.**
+
+Federated CMS is a self-hosted mail and information server for amateur radio.
+
+- **Operator-controlled nodes.** Clubs, regions and individual operators run their own. Each node fetches web pages, weather and feeds directly, so requests don't depend on one central service being up. The node's licensee decides what it offers, within their country's amateur rules.
+- **Bring your client.** Any program that speaks the published B2F protocol can connect, and accounts are by callsign.
+- **Bring your modem.** B2F runs over any link that carries a reliable byte stream.
+- **Reuse what you have.** BPQ, packet applications and Reticulum services plug in as information sources.
+
+## Why
+
+- **Client choice.** Winlink's production servers accept only client programs they recognise. [kissterm](https://github.com/bradbrownjr/kissterm), an independent B2F client, is answered "Unknown client types are not allowed on production servers -- use cms-z.winlink.org", over the Internet and through an RMS gateway alike; the test server accepts it ([kissterm roadmap](https://github.com/bradbrownjr/kissterm/blob/main/docs/ROADMAP.md)).
+- **Modem choice.** Winlink gateways offer a fixed set of modes: PACTOR, ARDOP, VARA, Robust Packet, AX.25 packet and Telnet ([Winlink sysop software](https://winlink.org/node/21)). New modems keep appearing, and a self-hosted node can carry B2F over any of them.
+- **Independence.** A node that fetches its own information keeps working when a central service or its hosting provider is down.
 
 ## M1 local prototype
 
@@ -9,9 +22,7 @@ terminal bridge for the first M1 increment. It is intentionally not federation
 or a production B2F server. A separate loopback-only B2F laboratory exchanges
 synthetic messages with an isolated test mailbox. See [development setup and BPQ examples](docs/DEVELOPMENT.md).
 
-Federated CMS investigates a decentralized, self-hostable messaging and information network for amateur radio. Nodes remain useful when isolated, discover peers without a mandatory central coordinator, forward durable requests and messages when links return, and route client information requests to reachable providers or Internet egress gateways.
-
-CMS is used here descriptively for **Common Message Server**; this project is independent of Winlink and is not affiliated with or endorsed by its operators. Compatibility is a research goal, not an existing feature.
+CMS is used here descriptively for **Common Message Server**; this project is independent of Winlink and is not affiliated with or endorsed by its operators. Compatibility with existing clients is tested in the lab; see the [compatibility matrix](docs/WINLINK-INTEROPERABILITY.md).
 
 No Winlink software has been decompiled or disassembled for this project. It is built from published specifications, open-source programs and compatibility tests of unmodified clients against our own server. See [how Federated CMS works with Winlink software](docs/INDEPENDENT-IMPLEMENTATION.md).
 
