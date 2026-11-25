@@ -5,8 +5,8 @@ reading replies waits for a capture of a real Winlink Express reply
 (test 2 in [ON-AIR-TESTS.md](ON-AIR-TESTS.md)).
 
 A user asks for something, the node answers with the content or with a
-short numbered menu, and the user replies with their choice. It works
-from unmodified Winlink Express: requests are ordinary `INQUIRY`
+short numbered menu, and the user replies with their choice. It is intended
+to work from unmodified Winlink Express: requests are ordinary `INQUIRY`
 messages and choices are ordinary replies.
 
 Every round trip costs a radio connection, possibly hours apart, so the
@@ -27,15 +27,16 @@ VERB [arguments]
 - `VERB` is one of the node's services, case-insensitive. Service verbs
   are reserved: the node's catalog must not use them as IDs.
 - Arguments are free text, at most 200 characters, whitespace collapsed.
-- Trailing numbers pick from the menu the command would produce, so one
-  request can skip menus: `NEWS BBC 3` is "headlines from BBC, item 3".
+- A choice after `|` picks from the menu the command would produce, so one
+  request can skip menus: `NEWS BBC | 3` is "headlines from BBC, item 3".
 - `HELP` lists the node's services; `HELP VERB` explains one.
 - An unknown verb is rejected like any invalid line, and the reply
   includes the `HELP` list.
 
 ## Replies
 
-One message per item, from `SERVICE`, as Winlink does today.
+One message per item, from `SERVICE`, as Winlink does (observed in
+[INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md)).
 
 | Reply | Subject |
 | --- | --- |
@@ -60,7 +61,7 @@ Content bodies are rendered by `federated_cms.plaintext.render`: title,
 3. Mercury (mythology)
 4. Freddie Mercury
 
-Reply to this message with the numbers you want, for example 2 or 1 3.
+Reply to this message with the numbers you want, for example 2, 1 3 or 2-4.
 Each number is the same as sending: WIKI <its title>
 Menu K7QX for N0CALL, valid until 2026-12-02 01:00 UTC.
 ```
@@ -100,10 +101,8 @@ Menu K7QX for N0CALL, valid until 2026-12-02 01:00 UTC.
 ## Services
 
 Each node has a fixed table of services set up by its sysop: the verb, a
-one-line description for `HELP`, the handler, and its limits. Requests
-are dispatched only through that table; nothing in a message is ever run
-as code. (radiomail, an earlier project, used `eval` on the subject;
-this design must never do that.)
+one-line description for `HELP`, the handler, and its limits. Requests are dispatched only through this table; message text
+is never evaluated as code.
 
 ### `WIKI <subject> [| choice]`
 
@@ -123,7 +122,7 @@ per node (default `en`).
 **The summary's menu:**
 
 ```text
-1. Full article (about 70,000 characters, 6 messages)
+1. Full article (about 111,000 characters, 10 messages)
 2. Facts box
 3. Nomenclature
 4. Physical characteristics
@@ -181,8 +180,8 @@ Steps:
 Measured on `Mercury (planet)`, 2026-11-25, before any class cleanup:
 the lead section is 67 KB of HTML and 8,870 characters of text, mostly
 infobox; the full article is 643 KB of HTML, 26 sections and about
-111,000 characters. The menu figures above are illustrative until
-cleanup is in place.
+111,000 characters. The menu figures above are measured before cleanup and
+will drop once cleanup is in place.
 
 The TextExtracts API (`prop=extracts`) is not used: its documentation
 says it is not actively maintained and asks that no new features be
