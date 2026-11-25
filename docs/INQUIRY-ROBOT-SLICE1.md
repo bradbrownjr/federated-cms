@@ -17,20 +17,22 @@ an implementation pass.
 | --- | --- |
 | `tests/test_robot_config.py` | `load_config`, catalog TSV, every refusal reason, the `check` and `run` commands |
 | `tests/test_robot.py` | hook, worker, leases, crash points, replies, MIDs, loop rules, limits, hostile input |
-| `tests/test_robot_b2f.py` | a request and its reply over the loopback B2F lab server |
+| `tests/test_robot_b2f.py` | a request and its reply over the loopback B2F lab server; an unreadable message does not break the session |
+| `tests/test_b2_message_headers.py` | `b2_message.message_headers`, and `message_mid`/`message_attachments` unchanged |
 | `tests/robot_helpers.py` | fake clock, message builder, fixture paths (test code, not contract) |
 | `tests/fixtures/robot/` | configuration fixtures |
 
-Run: `PYTHONPATH=src python -m pytest tests/test_robot_config.py tests/test_robot.py tests/test_robot_b2f.py`
+Run: `PYTHONPATH=src python -m pytest tests/test_robot_config.py tests/test_robot.py tests/test_robot_b2f.py tests/test_b2_message_headers.py`
 or `python -m unittest discover -v`.
 
 ## Files
 
-The implementation creates or edits these three source files and no
+The implementation creates or edits these four source files and no
 others:
 
 | File | Change |
 | --- | --- |
+| `src/federated_cms/b2_message.py` | edit: add the public `message_headers` |
 | `src/federated_cms/robot.py` | new: schema, hook functions, worker, reply builder, `HELP`, `LIST`, static items, `main` |
 | `src/federated_cms/robot_config.py` | new: `load_config`, catalog TSV loading, validation |
 | `src/federated_cms/lab_mailbox.py` | edit: create the robot schema, call the hook in `store_message` |
@@ -114,52 +116,92 @@ fetch cache are not created in slice 1.
 
 ```python
 ROBOT_ADDRESSES = frozenset({"INQUIRY", "QTH", "SERVICE"})
+def classify(raw: bytes) -> frozenset[str]: ...
 def robot_addresses(raw: bytes) -> frozenset[str]: ...
 def initialize_schema(con: sqlite3.Connection) -> None: ...
 def enqueue_inbound(con: sqlite3.Connection, account: str, mid: str, raw: bytes,
                     received_at: datetime) -> bool: ...
 ```
 
-**`robot_addresses(raw)`** reads the message headers (see
+**`classify(raw)`** reads the message headers (see
 [Reading a message](#reading-a-message)) and returns the members of
 `ROBOT_ADDRESSES` that are the local part of any `To:` or `Cc:` address.
-A header value may hold several addresses separated by `,` or `;`; each is
-stripped and passed to `inquiry.address_local_part`. Addresses that raise
-are skipped. It never raises: any error, including a `raw` that is not a
-valid B2 message or not `bytes`, gives `frozenset()`.
+A header value may hold several addresses separated by `,` or `;`. Each
+part has spaces and tabs removed from both ends; a part that is then empty
+or holds any character outside printable ASCII is skipped (so
+`To: INQUIRY\xa0` and `To: N0CALL\rTo: INQUIRY` name no robot address).
+Other parts go to `inquiry.address_local_part`; a part it rejects is
+skipped. `To: N0CALL INQUIRY` is one address with local part
+`N0CALL INQUIRY`. `classify` raises `B2MessageError` when `message_headers`
+does.
 
-**`enqueue_inbound(con, account, mid, raw, received_at)`** computes
-`robot_addresses(raw)`; when empty it writes nothing and returns `False`.
-Otherwise it runs
+**`robot_addresses(raw)`** is `classify(raw)`, except that it never raises:
+any exception, including for a `raw` that is not `bytes`, gives
+`frozenset()`.
+
+**`enqueue_inbound(con, account, mid, raw, received_at)`** calls
+`classify(raw)`, looked up as a module global at call time so tests can
+patch `federated_cms.robot.classify`.
+
+- `classify` raised any `Exception`: the message content cannot block its
+  own storage. Insert, with `INSERT OR IGNORE`, a row with
+  `addresses=''`, `state='ignored'`, `reason='unreadable'`, `attempts=0`,
+  `next_attempt_at = finished_at = received_at`; log `event=unreadable`;
+  return `False`.
+- The set is empty: write nothing, return `False`.
+- Otherwise run
 
 ```sql
 INSERT OR IGNORE INTO robot_inbox (account, mid, addresses, received_at, state, attempts, next_attempt_at)
 VALUES (?, ?, ?, ?, 'queued', 0, ?)
 ```
 
-with `addresses` the sorted names joined by `,` (`INQUIRY,QTH`) and
-`next_attempt_at = received_at`, and returns whether a row was inserted.
-It does not open, commit or roll back a transaction.
+  with `addresses` the sorted names joined by `,` (`INQUIRY,QTH`) and
+  `next_attempt_at = received_at`, and return whether a row was inserted.
+
+It does not open, commit or roll back a transaction. Only exceptions from
+its SQL statements leave it, the same as any storage failure.
 
 **In `LabMailboxService.store_message`**, inside the existing
 `BEGIN IMMEDIATE` transaction, after the new row is inserted and before
 `COMMIT`, when `direction == "in"`: call
 `_robot.enqueue_inbound(con, account, mid, raw, received_at)`. Nothing is
-called for `out`, or when the row already existed (duplicate). An
-exception from the hook leaves the whole transaction uncommitted, so
-neither the message nor the queue row is stored; an `sqlite3.Error` comes
-out as `StoreUnavailable`, as today. Only `store_message`, which needs a
+called for `out`, or when the row already existed (duplicate). A
+database error in the hook leaves the whole transaction uncommitted, so
+neither the message nor the queue row is stored, and comes out as
+`StoreUnavailable`, as today. Nothing about a message's content makes the
+hook raise, so a bad message cannot fail the B2F session or hold up the
+client's outbox. Only `store_message`, which needs a
 session opened after B2F login, queues anything (loop rule 1).
 
 ## Reading a message
 
-The robot validates `raw` with `b2_message.message_mid` first, then splits
-at the first `\r\n\r\n`. Header lines are split on `\r\n`; a line starting
-with space or tab continues the previous header (joined with one space,
-stripped), as `b2_message` does. Names compare case-insensitively. Values
-are decoded as ISO-8859-1 (never fails) and stripped. When a header
-appears more than once, `Subject` and `From` use the first; `To`, `Cc` and
-`Auto-Submitted` use all. A missing `Subject` is `""`.
+```python
+# federated_cms.b2_message
+def message_headers(raw: bytes) -> tuple[tuple[str, bytes], ...]
+```
+
+`message_headers` returns the headers in order as `(name, value)`, built
+by the same loop `_message_sections` uses: the name lower-cased and
+decoded as ASCII, the value `bytes.strip()`-ed, a line starting with space
+or tab appended to the previous value after one space (`value + b" " +
+line.strip()`). It raises `B2MessageError` exactly when `message_mid`
+would, for the same input. `message_mid` and `message_attachments` keep
+their behaviour.
+
+The robot reads headers only through `message_headers` and decodes each
+value as ISO-8859-1 (never fails), with no further stripping. Lines are
+separated by `\r\n` only: a lone `\r`, `\n` or `\x85` is part of the
+value. When a header appears more than once, `Subject` and `From` use the
+first, as `email.message.Message.get` does; a later copy cannot override
+what the client's header block put first. `To`, `Cc` and `Auto-Submitted`
+use all copies. A missing `Subject` is `""`. A `From` value holding a
+character outside printable ASCII counts as unparsable.
+
+`federated_cms.menu_reply` reads headers with the `email` package, which
+parses display names (`To: Bob <SERVICE@x>` is `SERVICE` there, and no
+robot address here). Slice 4 must reconcile the two readers before
+`SERVICE` mail is processed.
 
 The body is the first `Body:` bytes after the blank line. It is decoded as
 strict UTF-8; if that fails, as strict `cp1252`; if that fails, the
@@ -277,7 +319,8 @@ messages get no reply and create no items.
   `POSTMASTER` and `node.name`, compared exactly with the account and with
   `address_local_part(From)` (so `N1TEST-10` matches the node
   `N1TEST-10`; `N1TEST` does not).
-- **Auto-Submitted:** the value up to the first `;`, stripped, compared
+- **Auto-Submitted:** the value up to the first `;`, with spaces and tabs
+  removed from both ends, compared
   case-insensitively with `no`. An empty value is not `no`.
 - **From mismatch:** when the first `From:` is missing, unparsable, or its
   local part differs from the account, add 1 to `robot_counters` row
@@ -557,8 +600,11 @@ character replaced with `?`.
 | `service[i].handler` | string | | a key of `HANDLERS`, which is `{}` in slice 1 |
 | `service[i].description` | string | | 1 to 60 printable ASCII characters |
 
-An "integer" is an `int` that is not a `bool`. Every other top-level key,
-and every other key in these tables, is unknown. A table of the wrong type
+An "integer" is an `int` that is not a `bool`; any size is accepted from
+TOML and then range-checked. Every other top-level key, and every other key
+in these tables, is unknown. A table of the wrong type gives only its
+`must be a table` problem; the keys it should hold are not reported as
+`required`. A table of the wrong type
 gives only its `must be a table` problem; the keys it should hold are not
 reported as `required`.
 
@@ -567,7 +613,7 @@ reported as `required`.
 | Problem | When |
 | --- | --- |
 | `config: cannot read` | the file is missing or unreadable |
-| `config: too large` | the file is over 1,000,000 bytes |
+| `config: too large` | the file is over 1,000,000 bytes (exactly 1,000,000 is read) |
 | `config: invalid TOML` | `tomllib` rejects it (no other problems are reported) |
 | `<key>: unknown key` | an unknown key or table, at any level, for example `robot.menu_expiry_day: unknown key`, `nodes: unknown key`, `limits.accounts.N0EOC.node_bytes_per_day: unknown key` |
 | `<path>: must be a table` | `node`, `robot`, `limits`, `catalog`, `limits.accounts`, `limits.accounts.<CALL>`, `service[i].options` not a table |
@@ -585,13 +631,15 @@ reported as `required`.
 | `catalog.file: outside config directory` | the resolved path is not inside the resolved config directory |
 | `catalog.file: not found` | not a readable regular file |
 | `catalog.file: too large` | over 2,000,000 bytes (rows are then not read) |
-| `catalog: too many entries` | more than 10,000 entry rows (lines not empty and not starting with `#`); rows are then not checked |
+| `catalog: too many entries` | more than 10,000 entry rows (lines that, after removing one trailing `\r`, are not empty and do not start with `#`); rows are then not checked |
 | `catalog:<n>: <reason>` | a bad row; `n` is the 1-based line number; see below |
 
 ### Catalog
 
 A text file of lines separated by `\n`; one trailing `\r` per line is
-removed. Lines that are empty or start with `#` are skipped. Every other
+removed. A byte order mark is three bytes above 0x7F, so it gives
+`catalog:1: not ASCII`. `text:` paths resolve against the config file's
+directory, not the catalog file's. Lines that are empty or start with `#` are skipped. Every other
 line is an entry with exactly four fields separated by tabs:
 `ID`, `CATEGORY`, `TARGET`, `DESCRIPTION`. Fields are not stripped. Each
 row gets at most one problem, the first that applies:
@@ -630,16 +678,39 @@ def main(argv: list[str] | None = None) -> int
 - `run --config PATH --database PATH [--once]`: load the config first;
   when invalid, print as `check` does and return 2 without opening or
   creating the database. Otherwise open `SQLiteStore(PATH)`, build a
-  `Robot` with the real UTC clock, and call `run_until_idle`; with
-  `--once`, return 0 after that; without it, repeat after sleeping 1 s
-  until interrupted.
+  `Robot` with the real UTC clock, and call `run_until_idle`. With
+  `--once`, return 0 after that. Without it, repeat after `time.sleep(1)`
+  (called through the `time` module) until `KeyboardInterrupt`, then
+  return 0.
+- An `Exception` from a pass (a poison message, `StoreUnavailable`) is
+  caught, logged as `event=run_error` with its class name, and the loop
+  goes on to the next pass, after the same sleep. With `--once`, `run`
+  then returns 1.
 
 ## Logging
 
-Logger `federated_cms.robot`, one `key=value` line per event (`event=`,
-`account=`, `mid=`, `item=`, `kind=`, `outcome=`). Subjects, bodies,
-arguments, URLs, catalog text and exception messages are never logged;
-for an exception, its class name is.
+Logger `federated_cms.robot`. Each record's message is space-separated
+`key=value` tokens, `event=<name>` first, other keys in any order. These
+events are required, with at least these keys; more keys and more events
+are allowed:
+
+| Event | Level | When | Keys |
+| --- | --- | --- | --- |
+| `dispatch` | INFO | dispatch committed | `account`, `mid`, `outcome` (the reason, or the state when the reason is NULL) |
+| `item` | INFO | item committed | `account`, `mid`, `item` (id), `kind`, `outcome` (final state) |
+| `stale` | INFO | a commit's lease check failed | `account`, `mid`, plus `item` for an item |
+| `attempts` | WARNING | a row or item set `failed`/`attempts` | `account`, `mid`, plus `item` for an item |
+| `item_error` | WARNING | an item got the internal error reply | `account`, `mid`, `item`, `error_class` |
+| `unreadable` | WARNING | `enqueue_inbound` recorded an unreadable message | `account`, `mid`, `error_class` |
+| `run_error` | ERROR | `main run` caught an exception | `error_class` |
+
+Subjects, bodies, arguments, URLs, catalog text and exception messages are
+never logged; for an exception, its class name is.
+
+## Replies and Auto-Submitted
+
+Replies carry no `Auto-Submitted` header. They go only to the account's
+mailbox on this node; revisit when replies can leave the node.
 
 ## Left for later slices
 
@@ -648,8 +719,10 @@ Same-session wait; `QTH` (slice 2); cache, fetch worker, URL items and
 `ALERTS`, `SOLAR` (5); `NEWS`, `WIKI` and splitting (6); limit notices,
 node-wide caps, `parts_per_item`, `status`, the janitor and retention (7);
 `cmd:` targets and the handler registry's first entries; the "could not
-process your message" reply after 3 failed attempts; a public header
-reader in `b2_message`; production `MailboxService` deposit.
+process your message" reply after 3 failed attempts; reconciling the
+`menu_reply` header reader with `message_headers` (4); an `Auto-Submitted`
+header on replies once they can leave the node; production
+`MailboxService` deposit.
 
 ## Decisions
 
@@ -662,9 +735,10 @@ Made for this contract on 2026-11-25, against INQUIRY-ROBOT.md:
    A message without `INQUIRY` is `ignored` with reason `unsupported`, so
    `QTH` reports and menu replies received before slices 2 and 4 are not
    answered later.
-3. **The robot reads headers itself** after `message_mid` has validated
-   the framing, because adding a public function to `b2_message.py` would
-   be a fourth file.
+3. **Headers come from a public `b2_message.message_headers`**, the same
+   loop that validates framing, so the robot and the mailbox cannot
+   disagree about where a header ends. This makes `b2_message.py` a fourth
+   file.
 4. **Inbox `done` means dispatched.** Items carry their own state; the
    inbox row is finished when its items exist.
 5. **`robot_items` has an `attempts` column**, and both inbox rows and
@@ -701,6 +775,10 @@ Made for this contract on 2026-11-25, against INQUIRY-ROBOT.md:
     design names the commit boundaries but no way to stop between them.
 19. **A queue row whose stored message is missing fails** with reason
     `missing` instead of stopping the worker.
+20. **An unreadable message is stored and recorded**, never refused by the
+    hook, so it cannot block the client's outbox.
+21. **`main run` survives a failing pass**; `--once` reports it with exit
+    status 1.
 
 ## Open questions
 

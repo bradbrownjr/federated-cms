@@ -20,10 +20,12 @@ from federated_cms import CMSCore, SQLiteStore
 from federated_cms.b2_message import message_mid
 from federated_cms.store import StoreUnavailable
 from federated_cms import robot as robot_module
+from federated_cms.b2_message import B2MessageError
 from federated_cms.robot import (
     ReplyError,
     Robot,
     build_reply,
+    classify,
     enqueue_inbound,
     make_subject,
     reply_mid,
@@ -239,18 +241,59 @@ class HookTests(unittest.TestCase):
         self.assertEqual(self.env.run(), 0)
         self.assertEqual(len(self.env.outbox()), 1)
 
-    def test_hook_failure_stores_nothing(self):
+    def test_hook_database_failure_stores_nothing(self):
         raw = message(M1, "HELP\r\n")
-        for error, expected in ((sqlite3.OperationalError("disk I/O error"), StoreUnavailable),
-                                (RuntimeError("bug"), RuntimeError)):
-            with self.subTest(error=type(error).__name__):
-                with patch("federated_cms.robot.enqueue_inbound", side_effect=error):
-                    with self.assertRaises(expected):
-                        self.env.deliver(raw)
-                self.assertIsNone(mailbox_call(self.env.store, "N0CALL", "get", M1, "in"))
-                self.assertIsNone(self.env.inbox(M1))
+        real = robot_module.enqueue_inbound
+        seen = {}
+
+        def failing(con, *args):
+            seen["in_transaction"] = con.in_transaction
+            seen["queued"] = real(con, *args)  # the queue row is written, then the database fails
+            raise sqlite3.OperationalError("disk I/O error")
+        with patch("federated_cms.robot.enqueue_inbound", side_effect=failing):
+            with self.assertRaises(StoreUnavailable):
+                self.env.deliver(raw)
+        self.assertEqual(seen, {"in_transaction": True, "queued": True})
+        self.assertIsNone(mailbox_call(self.env.store, "N0CALL", "get", M1, "in"))
+        self.assertIsNone(self.env.inbox(M1))
         self.assertTrue(self.env.deliver(raw))
         self.assertEqual(self.env.inbox(M1)["state"], "queued")
+
+    def test_hook_called_once_per_new_inbound_row(self):
+        real = robot_module.enqueue_inbound
+        calls = []
+
+        def counting(con, account, mid, raw, received_at):
+            calls.append((account, mid))
+            return real(con, account, mid, raw, received_at)
+        raw = message(M1, "HELP\r\n")
+        with patch("federated_cms.robot.enqueue_inbound", side_effect=counting):
+            self.assertTrue(self.env.deliver(raw))
+            self.assertFalse(self.env.deliver(raw))  # duplicate: not called again
+            mailbox_call(self.env.store, "N0CALL", "store_message", "OUT1", message("OUT1", "HELP"), "out")
+            self.env.deliver(message("PLAIN1", "hello", to=("N1TEST",)))
+        self.assertEqual(calls, [("N0CALL", M1), ("N0CALL", "PLAIN1")])
+
+    def test_unreadable_message_is_stored_and_recorded(self):
+        raw = message(M1, "HELP\r\n")
+        for error in (ValueError("bad"), B2MessageError("bad"), UnicodeDecodeError("ascii", b"x", 0, 1, "bad")):
+            with self.subTest(error=type(error).__name__):
+                env = RobotEnv(self)
+                with self.assertLogs("federated_cms.robot", level="WARNING") as logs:
+                    with patch("federated_cms.robot.classify", side_effect=error):
+                        self.assertTrue(env.deliver(raw))
+                self.assertEqual(mailbox_call(env.store, "N0CALL", "get", M1, "in"), raw)
+                row = env.inbox(M1)
+                self.assertEqual((row["addresses"], row["state"], row["reason"], row["attempts"]),
+                                 ("", "ignored", "unreadable", 0))
+                self.assertEqual(row["finished_at"], "2026-11-25T04:33:00.000000Z")
+                self.assertEqual(row["next_attempt_at"], "2026-11-25T04:33:00.000000Z")
+                record = [r for r in logs.records if r.getMessage().startswith("event=unreadable")]
+                self.assertEqual(len(record), 1)
+                self.assertEqual(record[0].levelname, "WARNING")
+                tokens = set(record[0].getMessage().split())
+                self.assertTrue({"account=N0CALL", f"mid={M1}", f"error_class={type(error).__name__}"} <= tokens)
+                self.assertEqual(env.run(), 0)
 
     def test_enqueue_inbound_directly(self):
         con = self.env.db()
@@ -288,6 +331,32 @@ class RobotAddressesTests(unittest.TestCase):
         for raw in hostile:
             with self.subTest(raw=repr(raw)[:40]):
                 self.assertEqual(robot_addresses(raw), frozenset())
+
+    def test_separators_inside_a_header_value(self):
+        # Header lines end only at CRLF; a lone LF, CR or U+0085 stays in the
+        # value, which then holds a non-printable character and is skipped.
+        for separator in (b"\n", b"\r", b"\x85"):
+            with self.subTest(separator=separator):
+                raw = message(M1, "LIST", to=("N0CALL",)).replace(
+                    b"To: N0CALL\r\n", b"To: N0CALL" + separator + b"To: INQUIRY\r\n")
+                self.assertEqual(message_mid(raw), M1)
+                self.assertEqual(robot_addresses(raw), frozenset())
+                self.assertEqual(classify(raw), frozenset())
+
+    def test_space_is_not_a_separator(self):
+        self.assertEqual(robot_addresses(message(M1, "LIST", to=("N0CALL INQUIRY",))), frozenset())
+
+    def test_non_ascii_space_is_not_stripped(self):
+        raw = message(M1, "LIST", to=("INQUIRY\xa0",))
+        self.assertIn(b"To: INQUIRY\xa0\r\n", raw)
+        self.assertEqual(robot_addresses(raw), frozenset())
+        self.assertEqual(robot_addresses(message(M1, "LIST", to=(" \tINQUIRY \t, N1TEST",))),
+                         frozenset({"INQUIRY"}))
+
+    def test_classify_raises_robot_addresses_does_not(self):
+        with self.assertRaises(B2MessageError):
+            classify(b"garbage")
+        self.assertEqual(robot_addresses(b"garbage"), frozenset())
 
     def test_many_recipients(self):
         to = ", ".join(f"N{n}X" for n in range(2000)) + ", INQUIRY"
@@ -464,6 +533,17 @@ class HappyPathTests(unittest.TestCase):
         self.env.run()
         raw = dict(self.env.outbox())["WLOG5X2ZANUV"]
         self.assertIn(b"Line 2: CAF? (invalid item)\r\n", raw)
+
+    def test_first_from_wins(self):
+        # As email.message.Message.get: a later From cannot override the first.
+        self.env.deliver(message("FROM1", "HELP", sender="N1TEST", extra=("From: SERVICE",)))
+        self.env.run()
+        self.assertEqual(self.env.inbox("FROM1")["state"], "done")
+        self.assertEqual(self.env.query("SELECT value FROM robot_counters WHERE name='from_mismatch'")[0]["value"], 1)
+        self.env.deliver(message("FROM2", "HELP", sender="SERVICE", extra=("From: N0CALL",)))
+        self.env.run()
+        self.assertEqual((self.env.inbox("FROM2")["state"], self.env.inbox("FROM2")["reason"]),
+                         ("ignored", "loop_name"))
 
     def test_first_subject_wins(self):
         self.env.deliver(message("SUBJ1", "HELP", subject="REQUEST", extra=("Subject: HELLO",)))
@@ -685,12 +765,18 @@ class LimitTests(unittest.TestCase):
             env.run()
         self.assertEqual(env.inbox("RPH3")["reason"], "limited")
         self.assertEqual(env.inbox("RPH3")["state"], "ignored")
-        # Window (T0+60, T0+3660]: RPH3 (counted although limited) and RPH4.
-        # RPH2 at exactly T0+60 is outside, so the boundary is strict.
-        env.clock.now = T0 + timedelta(seconds=3660)
+        # Window (T0+30, T0+3630]: RPH2, RPH3 and RPH4 = 3 > 2. Without
+        # counting the limited RPH3 it would be 2, so limited rows count.
+        env.clock.now = T0 + timedelta(seconds=3630)
         env.deliver(message("RPH4", "HELP"))
         env.run()
-        self.assertEqual(env.inbox("RPH4")["state"], "done")
+        self.assertEqual((env.inbox("RPH4")["state"], env.inbox("RPH4")["reason"]), ("ignored", "limited"))
+        # Window (T0+120, T0+3720]: RPH4 and RPH5 = 2. RPH3 at exactly T0+120
+        # is outside, so the boundary is strict.
+        env.clock.now = T0 + timedelta(seconds=3720)
+        env.deliver(message("RPH5", "HELP"))
+        env.run()
+        self.assertEqual(env.inbox("RPH5")["state"], "done")
         self.assertEqual(len(env.outbox()), 3)
         # Other accounts keep the default of 10.
         for number in range(3):
@@ -1157,6 +1243,81 @@ class HostileTests(unittest.TestCase):
         self.assertEqual((self.env.inbox("GHOST1")["state"], self.env.inbox("GHOST1")["reason"]),
                          ("failed", "missing"))
         self.assertEqual(self.env.inbox("REAL1")["state"], "done")
+        self.assertEqual(self.env.query("SELECT * FROM robot_counters"), [])  # no From to compare
+
+
+def log_events(logs) -> list[tuple[str, str, set[str]]]:
+    events = []
+    for record in logs.records:
+        tokens = record.getMessage().split()
+        if tokens and tokens[0].startswith("event="):
+            events.append((tokens[0][6:], record.levelname, set(tokens[1:])))
+    return events
+
+
+def levels(events, name, *required) -> list[str]:
+    return [level for event, level, tokens in events if event == name and set(required) <= tokens]
+
+
+class LoggingTests(unittest.TestCase):
+    def setUp(self):
+        self.env = RobotEnv(self)
+
+    def test_dispatch_and_item_events(self):
+        self.env.deliver(message(M1, "HELP"))
+        self.env.deliver(message("LOOP1", "HELP", sender="SERVICE"))
+        with self.assertLogs("federated_cms.robot", level="DEBUG") as logs:
+            self.env.run()
+        events = log_events(logs)
+        item = self.env.items(M1)[0]["id"]
+        self.assertEqual(levels(events, "dispatch", "account=N0CALL", f"mid={M1}", "outcome=done"), ["INFO"])
+        self.assertEqual(levels(events, "dispatch", "account=N0CALL", "mid=LOOP1", "outcome=loop_name"), ["INFO"])
+        self.assertEqual(levels(events, "item", "account=N0CALL", f"mid={M1}", f"item={item}", "kind=help",
+                                "outcome=done"), ["INFO"])
+
+    def test_stale_item_error_and_attempts_events(self):
+        self.env.deliver(message(M1, "HELP\r\nLIST"))
+        self.env.robot().run_once()  # dispatch
+        items = [row["id"] for row in self.env.items(M1)]
+        with self.assertLogs("federated_cms.robot", level="DEBUG") as logs:
+            self.env.robot(fault=fault_once("item.before", action=lambda: self.env.clock.advance(10))).run_once()
+            self.env.robot(fault=fault_once("item.build", exception=lambda p: KeyError("x"))).run_once()
+        events = log_events(logs)
+        self.assertEqual(levels(events, "stale", "account=N0CALL", f"mid={M1}", f"item={items[0]}"), ["INFO"])
+        self.assertEqual(levels(events, "item_error", "account=N0CALL", f"mid={M1}", f"item={items[0]}",
+                                "error_class=KeyError"), ["WARNING"])
+
+        def always(name):
+            if name == "item.before":
+                raise Crash(name)
+        with self.assertLogs("federated_cms.robot", level="DEBUG") as logs:
+            for _ in range(4):
+                try:
+                    self.env.run(fault=always)
+                except Crash:
+                    self.env.clock.advance(11)
+        self.assertEqual(levels(log_events(logs), "attempts", "account=N0CALL", f"mid={M1}", f"item={items[1]}"),
+                         ["WARNING"])
+
+    def test_inbox_attempts_event(self):
+        self.env.deliver(message(M1, "HELP"))
+
+        def always(name):
+            if name == "dispatch.before":
+                raise Crash(name)
+        for _ in range(3):
+            with self.assertRaises(Crash):
+                self.env.run(fault=always)
+            self.env.clock.advance(11)
+        with self.assertLogs("federated_cms.robot", level="DEBUG") as logs:
+            self.env.robot().run_once()
+        self.assertEqual(levels(log_events(logs), "attempts", "account=N0CALL", f"mid={M1}"), ["WARNING"])
+
+    def test_stale_dispatch_event(self):
+        self.env.deliver(message(M1, "HELP"))
+        with self.assertLogs("federated_cms.robot", level="DEBUG") as logs:
+            self.env.robot(fault=fault_once("dispatch.before", action=lambda: self.env.clock.advance(10))).run_once()
+        self.assertEqual(levels(log_events(logs), "stale", "account=N0CALL", f"mid={M1}"), ["INFO"])
 
 
 class ListTruncationTests(unittest.TestCase):
@@ -1189,6 +1350,26 @@ class ListTruncationTests(unittest.TestCase):
         expected += ["", f"Items not shown: {200 - k}."]
         self.assertEqual(body, body_text(*expected))
         self.assertEqual(len("\n".join(expected) + "\n"), 11920)
+
+    def test_exactly_12000_characters_is_not_cut(self):
+        # 147 entries: 126 with 70-character descriptions (81 per line) and 21
+        # with 71 (82 per line): 72 + 126 * 81 + 21 * 82 = 72 + 10206 + 1722 = 12000.
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        (root / "one.txt").write_bytes(b"One.\n")
+        descriptions = ["D" * 70] * 126 + ["E" * 71] * 21
+        rows = "".join(f"ITEM{n:04d}\tBULK\ttext:one.txt\t{d}\n" for n, d in enumerate(descriptions, 1))
+        (root / "catalog.tsv").write_bytes(rows.encode("ascii"))
+        (root / "robot.toml").write_bytes(b'[node]\nname = "N1TEST-10"\ncontact = "sysop@example.org"\n'
+                                          b'[catalog]\nfile = "catalog.tsv"\n')
+        env = RobotEnv(self, root / "robot.toml")
+        env.deliver(message(M1, "LIST"))
+        env.run()
+        body = parse_reply(env.outbox()[0][1])[1].replace("\r\n", "\n")
+        expected = [self.HEADER, "", "BULK"] + [f"ITEM{n:04d}  {d}" for n, d in enumerate(descriptions, 1)]
+        self.assertEqual(len("\n".join(expected) + "\n"), 12000)
+        self.assertEqual(body, body_text(*expected))
 
     def test_one_character_over_is_cut(self):
         description = "D" * 68

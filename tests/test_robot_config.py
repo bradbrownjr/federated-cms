@@ -136,6 +136,35 @@ class LoadTests(ConfigCase):
         config = load_config(self.write(NODE_TOML + CATALOG_TOML, rows))
         self.assertEqual(len(config.catalog), 10000)
 
+    def test_entry_count_ignores_lines_that_are_only_cr(self):
+        rows = "".join(f"ID{n}\tCAT\ttext:files/ok.txt\tEntry\r\n" for n in range(10000))
+        config = load_config(self.write(NODE_TOML + CATALOG_TOML, rows + "\r\n" * 5 + "#x\r\n"))
+        self.assertEqual(len(config.catalog), 10000)
+
+    def test_text_paths_resolve_against_config_directory(self):
+        (self.dir / "cat").mkdir()
+        (self.dir / "cat" / "catalog.tsv").write_bytes(b"OK1\tCAT\ttext:files/ok.txt\tEntry\n")
+        toml = NODE_TOML + '[catalog]\nfile = "cat/catalog.tsv"\n'
+        config = load_config(self.write(toml))
+        self.assertEqual(config.catalog[0].text, "Fine.\n")
+        # Relative to the catalog's directory this would be conf/files/ok.txt;
+        # relative to the config directory it is outside.
+        (self.dir / "cat" / "catalog.tsv").write_bytes(b"OK1\tCAT\ttext:../files/ok.txt\tEntry\n")
+        self.assertProblem(toml, "catalog:1: text file outside config directory")
+        (self.dir / "cat" / "files").mkdir()
+        (self.dir / "cat" / "files" / "only-here.txt").write_bytes(b"x\n")
+        (self.dir / "cat" / "catalog.tsv").write_bytes(b"OK1\tCAT\ttext:files/only-here.txt\tEntry\n")
+        self.assertProblem(toml, "catalog:1: text file missing")
+
+    def test_exact_size_limits_are_accepted(self):
+        contact = "a@" + "b" * 122 + ".org"
+        self.assertEqual(len(contact), 128)
+        head = f'[node]\nname = "N1TEST-10"\ncontact = "{contact}"\n'
+        padded = head + "#" * (1_000_000 - len(head) - 1) + "\n"
+        self.assertEqual(len(padded.encode()), 1_000_000)
+        config = load_config(self.write(padded))
+        self.assertEqual(config.contact, contact)
+
     def test_config_is_frozen(self):
         config = load_config(BASIC)
         with self.assertRaises(Exception):
@@ -150,6 +179,7 @@ class RefusalTests(ConfigCase):
         self.assertProblem("[node\nname = 1", "config: invalid TOML")
         self.assertProblem(NODE_TOML + "x = 1\nx = 2\n", "config: invalid TOML")
         self.assertProblem(NODE_TOML + "#" * 1_000_001, "config: too large")
+        self.assertProblem("#" * 1_000_001, "config: too large")
 
     def test_unknown_keys(self):
         cases = [
@@ -240,6 +270,10 @@ class RefusalTests(ConfigCase):
             ("[limits]\nmessages_per_day = 0\n", "limits.messages_per_day: out of range"),
             ("[limits]\nmessages_per_day = -1\n", "limits.messages_per_day: out of range"),
             ("[limits]\nmessages_per_day = 1_000_000_001\n", "limits.messages_per_day: out of range"),
+            ("[limits]\nmessages_per_day = 9223372036854775808\n", "limits.messages_per_day: out of range"),
+            ("[limits]\nmessages_per_day = 99999999999999999999999999999999\n",
+             "limits.messages_per_day: out of range"),
+            ("[robot]\nmenu_expiry_days = -99999999999999999999999\n", "robot.menu_expiry_days: out of range"),
             ("[limits]\nitems_per_request = 33\n", "limits.items_per_request: out of range"),
             ("[limits]\nparts_per_item = 51\n", "limits.parts_per_item: out of range"),
             ("[limits]\nrequests_per_hour = 0\n", "limits.requests_per_hour: out of range"),
@@ -296,6 +330,7 @@ class RefusalTests(ConfigCase):
         (self.root / "secret.txt").write_bytes(b"outside\n")
         cases = [
             (b"CAF\xc3\x89\tCAT\ttext:files/ok.txt\tEntry\n", "not ASCII"),
+            (b"OK1\tCAT\ttext:files/ok.txt\tEntry\r\r\n", "invalid characters"),  # only one CR is removed
             (b"OK1\tCAT\ttext:files/ok.txt\tEnt\x07ry\n", "invalid characters"),
             (b"OK1\tCAT\ttext:files/ok.txt\n", "wrong number of fields"),
             (b"OK1\tCAT\ttext:files/ok.txt\tEntry\textra\n", "wrong number of fields"),
@@ -333,6 +368,10 @@ class RefusalTests(ConfigCase):
             with self.subTest(row=row[:60]):
                 catalog = b"# header\n" + row
                 self.assertEqual(self.problems(NODE_TOML + CATALOG_TOML, catalog), {f"catalog:2: {reason}"})
+
+    def test_byte_order_mark(self):
+        self.assertProblem(NODE_TOML + CATALOG_TOML, "catalog:1: not ASCII",
+                           b"\xef\xbb\xbfOK1\tCAT\ttext:files/ok.txt\tEntry\n")
 
     def test_one_problem_per_row_first_wins(self):
         # Bad ID and bad category and unsupported target: only "invalid ID".
@@ -433,6 +472,36 @@ class CommandLineTests(ConfigCase):
         self.assertEqual(code, 2)
         self.assertEqual(set(err.splitlines()), {"node.name: required", "node.contact: required"})
         self.assertFalse(database.exists())
+
+    def lab_database(self):
+        from federated_cms import CMSCore, SQLiteStore
+        database = self.root / "lab.sqlite"
+        CMSCore(SQLiteStore(database)).lab_mailbox()
+        return database
+
+    def test_run_once_reports_a_failing_pass(self):
+        database = self.lab_database()
+        with patch("federated_cms.robot.Robot.run_until_idle", side_effect=ValueError("secret-detail")):
+            with self.assertLogs("federated_cms.robot", level="ERROR") as logs:
+                code, _, _ = self.call(["run", "--config", str(BASIC), "--database", str(database), "--once"])
+        self.assertEqual(code, 1)
+        messages = [record.getMessage() for record in logs.records]
+        self.assertEqual([r.levelname for r in logs.records
+                          if r.getMessage().split()[0] == "event=run_error"
+                          and "error_class=ValueError" in r.getMessage().split()], ["ERROR"])
+        self.assertNotIn("secret-detail", "\n".join(messages))
+
+    def test_run_loop_survives_a_failing_pass(self):
+        database = self.lab_database()
+        # A third pass would mean the loop ignored KeyboardInterrupt; fail fast instead of spinning.
+        with patch("federated_cms.robot.Robot.run_until_idle",
+                   side_effect=[ValueError("x"), 0, KeyboardInterrupt]) as passes, \
+                patch("federated_cms.robot.time.sleep", side_effect=[None, KeyboardInterrupt]) as sleep:
+            with self.assertLogs("federated_cms.robot", level="ERROR"):
+                code, _, _ = self.call(["run", "--config", str(BASIC), "--database", str(database)])
+        self.assertEqual(code, 0)
+        self.assertEqual(passes.call_count, 2)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(1,), (1,)])
 
     def test_run_once_answers(self):
         from federated_cms import CMSCore, SQLiteStore

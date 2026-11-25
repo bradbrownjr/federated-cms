@@ -121,6 +121,39 @@ class RobotOverB2FTests(unittest.TestCase):
                     "SELECT delivered FROM shared_lab_mailbox_messages WHERE mid='B23RMN5PFUU7'").fetchone()[0], 1)
             self.assertEqual(Robot(store, load_config(BASIC), clock=clock).run_until_idle(), 0)
 
+    def test_unreadable_message_does_not_break_the_session(self):
+        clock = FakeClock()
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("federated_cms.lab_mailbox.time.time", side_effect=lambda: clock.timestamp()), \
+                patch("federated_cms.robot.classify", side_effect=ValueError("cannot classify")):
+            store = SQLiteStore(Path(directory) / "lab.sqlite")
+            store.initialize()
+            raw = message("REQ000000002", "HELP\r\n")
+            data = lzhuf.compress(raw)
+            proposal = f"FC EM REQ000000002 {len(raw)} {len(data)} 0".encode()
+            with LabServer(("127.0.0.1", 0), store, "N0CALL", PASSWORD) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    with socket.create_connection(server.server_address, timeout=3) as client:
+                        client.settimeout(3)
+                        with client.makefile("rb") as reader:
+                            handshake(client, reader)
+                            client.sendall(proposal + b"\r" + f"F> {proposal_checksum([proposal]):02X}\r".encode())
+                            self.assertEqual(line(reader), b"FS +")
+                            send_block(client, data)
+                            self.assertEqual(line(reader), b"FF")
+                            client.sendall(b"FQ\r")
+                            self.assertEqual(reader.read(), b"")
+                finally:
+                    server.shutdown()
+                    thread.join()
+            self.assertEqual(mailbox_call(store, "N0CALL", "get", "REQ000000002", "in"), raw)
+            check = store._connect()
+            with check:
+                row = check.execute("SELECT state, reason FROM robot_inbox WHERE mid='REQ000000002'").fetchone()
+            self.assertEqual(tuple(row), ("ignored", "unreadable"))
+
 
 if __name__ == "__main__":
     unittest.main()
