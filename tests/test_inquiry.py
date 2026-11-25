@@ -94,6 +94,12 @@ class InquiryTests(unittest.TestCase):
             ("catalog", "PROP_WWV"), ("catalog", "WL2K_NEARBY"), ("catalog", "AUR_TONIGHT"),
         ])
 
+    def test_only_cr_and_lf_end_lines(self):
+        # NEL and Unicode line separators are not line endings in B2 text.
+        request = parse_inquiry("REQUEST", "PROP_WWV\x85INQUIRIES\u2028AUR_TONIGHT\nLIST")
+        self.assertEqual(self.kinds(request), [("list", "LIST")])
+        self.assertEqual([r.line_number for r in request.rejected], [1])
+
     def test_semicolon_starts_comment(self):
         request = parse_inquiry("REQUEST", "PROP_WWV ; solar flux\n; whole line comment\nINQUIRIES;x")
         self.assertEqual(self.kinds(request), [("catalog", "PROP_WWV"), ("catalog", "INQUIRIES")])
