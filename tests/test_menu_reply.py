@@ -148,9 +148,9 @@ class FixtureTests(Base):
         data = (FIXTURES / "express_reply.eml").read_bytes()
         broken = data.replace(b"----- Message from", b"----- Message FROM")
         self.assertNotEqual(broken, data)
-        # Without a separator the quoted original is read as choices, and fails.
-        with self.assertRaises(MenuReplyError):
-            parse_menu_reply(broken)
+        # Without a separator the quoted original is read as choices; its UTF-8
+        # non-breaking space is seen before any token is judged.
+        self.assertReason(broken, "non-ASCII")
 
     def test_base64_fixture(self):
         self.assertReply((FIXTURES / "base64_reply.eml").read_bytes(), "K7QX", (1, 3, 4))
@@ -161,6 +161,14 @@ class FixtureTests(Base):
     def test_fixture_is_deterministic_and_independent_of_line_endings(self):
         data = (FIXTURES / "express_reply.eml").read_bytes()
         self.assertEqual(parse_menu_reply(data), parse_menu_reply(data.replace(b"\r\n", b"\n")))
+
+
+def rfc822_chain(count: int) -> bytes:
+    """`count` nested message/rfc822 entities around a small text message."""
+    inner = b"Subject: x\r\nContent-Type: text/plain\r\n\r\n2\r\n"
+    for _ in range(count):
+        inner = b"Content-Type: message/rfc822\r\n\r\n" + inner
+    return inner
 
 
 class RecipientTests(Base):
@@ -197,6 +205,36 @@ class RecipientTests(Base):
         self.assertReason(b"this is not a mail message at all", "no service address")
         self.assertReason(bytes(range(256)) * 4, "no service address")
 
+    def test_every_to_header_counts(self):
+        self.assertReply(express(to="bob@example.org", extra=["To: SERVICE@winlink.org"]))
+        self.assertReply(express(to="SERVICE@winlink.org", extra=["To: bob@example.org"]))
+        self.assertReply(express(to="bob@example.org", extra=["to: x@y.example", "TO: service@z.example"]))
+        self.assertReason(express(to="bob@example.org", extra=["To: alice@example.org"]), "no service address")
+
+    def test_encoded_words_are_not_decoded_in_addresses(self):
+        # RFC 2047 section 5: encoded words are not allowed in addr-specs. This one decodes to SERVICE@x.
+        self.assertReason(express(to="=?utf-8?b?U0VSVklDRUB4?="), "no service address")
+        self.assertReason(express(to="=?utf-8?q?SERVICE?=@winlink.org"), "no service address")
+        # In a display name it is just a name; the address decides.
+        self.assertReply(express(to="=?utf-8?q?Service_Desk?= <SERVICE@winlink.org>"))
+        self.assertReason(express(to="=?utf-8?q?SERVICE?= <bob@winlink.org>"), "no service address")
+
+    def test_unparseable_to_values_give_no_address_not_a_crash(self):
+        for to in (b".?=\xff:\r\n ?=];;", b"\r\n ,a\r\n  >)\r\n <,\"", b"<<<>>>", b"(((", b'"', b",,,,",
+                   b"a@b@c@d", b"\x00\x00", b":;", b"SERVICE@x:;"):
+            with self.subTest(to=to):
+                try:
+                    result = parse_menu_reply(express(to=to))
+                except MenuReplyError as error:
+                    self.assertIn(error.reason, ("no service address",))
+                else:
+                    self.assertIsInstance(result, MenuReply)
+        self.assertReason(express(to=b".?=\xff:\r\n ?=];;"), "no service address")
+        self.assertReason(express(to=b"\r\n ,a\r\n  >)\r\n <,\""), "no service address")
+
+    def test_one_unparseable_to_header_does_not_hide_another(self):
+        self.assertReply(express(to=b".?=\xff:\r\n ?=];;", extra=["To: SERVICE@winlink.org"]))
+
     def test_recipient_is_checked_before_the_subject_and_body(self):
         self.assertReason(express("junk", to="bob@example.org", subject="nothing"), "no service address")
 
@@ -229,6 +267,7 @@ class SubjectTests(Base):
                         "Re: [K7QX", "Re: [[K7QX", "Re: [K7-X]", "Re: [K7_X]", "Re: [K7.X]",
                         "Re: [planet]", "Re: [ABCDE]",
                         "Re: [\uff2b\uff17\uff31\uff38]".encode("utf-8"),   # fullwidth letters and digits
+                        "Re: [\u017f234]".encode("utf-8"),                 # long s
                         "Re: [K\u0663QX]".encode("utf-8"),                 # Arabic-Indic digit
                         "Re: [K7\u212aX]".encode("utf-8")):                # Kelvin sign
             with self.subTest(subject=subject):
@@ -362,7 +401,8 @@ class TextPartTests(Base):
         self.assertReply(message(b64(body), ctype=TEXT, cte="base64"), numbers=expected)
 
     def test_unsupported_transfer_encoding(self):
-        for cte in ("x-uuencode", "uuencode", "gzip", "x-foo", "quoted-printable, base64", "8 bit"):
+        for cte in ("x-uuencode", "uuencode", "gzip", "x-foo", "quoted-printable, base64", "8 bit", "base64 (comment)",
+                    "quoted-printable (c)", "x-uue", "uue"):
             with self.subTest(cte=cte):
                 self.assertReason(wrapped([part(b"2\r\n", TEXT, cte)]), "unsupported transfer encoding")
 
@@ -377,6 +417,11 @@ class TextPartTests(Base):
     def test_base64_details(self):
         self.assertReply(wrapped([part(b64(b"MORE"), TEXT, "base64")]), numbers=(), more=True)
         self.assertReply(wrapped([part(b"Mg==", TEXT, "base64")]), numbers=(2,))
+        # get_payload(decode=True) is lenient: padding is repaired, and a body
+        # that is not valid base64 at all may come back unchanged.
+        self.assertReply(wrapped([part(b"Mg", TEXT, "base64")]), numbers=(2,))
+        self.assertReply(wrapped([part(b"2\r\n", TEXT, "base64")]), numbers=(2,))
+        self.assertReply(message(b"2\r\n", ctype=TEXT, cte="base64"), numbers=(2,))
 
     def test_base64_garbage_is_an_error_not_a_crash(self):
         for body in (b"!!!!", b"@@@@\r\n####", b"====", b"M", b"\xff\xfe\xfd\xfc"):
@@ -387,6 +432,65 @@ class TextPartTests(Base):
     def test_base64_body_with_non_ascii_before_the_separator(self):
         self.assertReason(wrapped([part(b64(b"\xc2\xa02\r\n" + SEP), TEXT, "base64")]), "non-ASCII")
         self.assertReason(wrapped([part(b64(b"2\xa0\r\n"), TEXT, "base64")]), "non-ASCII")
+
+
+class HeaderSemanticsTests(Base):
+    """Content type, disposition and transfer encoding are what the standard
+    library's get_content_type(), get_content_disposition() and
+    get_payload(decode=True) make of the headers, with no extra trimming."""
+
+    def test_content_type_that_is_not_type_slash_subtype_is_text_plain(self):
+        self.assertReply(wrapped([part(b"2\r\n", "text/html/extra", None)]))
+        self.assertReply(wrapped([part(b"2\r\n", "html", None)]))
+        self.assertReply(wrapped([part(b"2\r\n", "text//", None)]))
+
+    def test_comment_after_content_type_is_not_ignored(self):
+        self.assertReason(wrapped([part(b"2\r\n", "text/plain (c)", None)]), "no text part")
+        self.assertReason(wrapped([part(b"2\r\n", "text/plain (c); charset=us-ascii", None)]), "no text part")
+
+    def test_comment_after_disposition_is_not_ignored(self):
+        data = wrapped([part(b"2\r\n", "text/plain", None, ["Content-Disposition: attachment (c)"])])
+        self.assertReply(data)
+        data = wrapped([part(b"2\r\n", "text/plain", None, ["Content-Disposition: attachment; filename=a.txt"])])
+        self.assertReason(data, "no text part")
+
+    def test_comment_after_transfer_encoding_is_not_understood(self):
+        data = wrapped([part(b"Mg==\r\n", TEXT, "base64 (comment)")])
+        self.assertReason(data, "unsupported transfer encoding")
+
+    def test_empty_transfer_encoding_is_7bit(self):
+        self.assertReply(wrapped([part(b"2\r\n", TEXT, "")]))
+        self.assertReply(message(b"2\r\n", ctype=TEXT, cte=""))
+
+    def test_digest_children_default_to_message_rfc822(self):
+        ctype, body = multi([part(b"2\r\n", None, None)], "digest")
+        self.assertReason(message(body, ctype=ctype), "no text part")
+        # Naming the type makes it a text part again; so does another subtype.
+        ctype, body = multi([part(b"2\r\n", "text/plain", None)], "digest")
+        self.assertReply(message(body, ctype=ctype))
+        ctype, body = multi([part(b"2\r\n", None, None)], "mixed")
+        self.assertReply(message(body, ctype=ctype))
+
+
+class TopLevelHeaderTests(Base):
+    """Subject and To come only from the top-level header block."""
+
+    def test_part_headers_are_not_duplicates_or_sources(self):
+        text = part(b"2\r\n", TEXT, None, ["Subject: Re: [AB2C]", "To: bob@example.org", "Subject: Re: [WXYZ]"])
+        self.assertReply(wrapped([text]))
+
+    def test_embedded_message_headers_are_not_read(self):
+        inner = b"Subject: Re: [AB2C]\r\nSubject: Re: [WXYZ]\r\nTo: SERVICE@winlink.org\r\n\r\n9\r\n"
+        attachment = part(inner, "message/rfc822", None, ["Content-Disposition: attachment"])
+        self.assertReply(wrapped([part(b"2\r\n", TEXT, None), attachment]))
+        self.assertReply(wrapped([attachment, part(b"2\r\n", TEXT, None)]))
+
+    def test_code_and_address_in_parts_do_not_help(self):
+        inner = b"Subject: Re: [AB2C]\r\nTo: SERVICE@winlink.org\r\n\r\n9\r\n"
+        attachment = part(inner, "message/rfc822", None)
+        text = part(b"2\r\n", TEXT, None, ["Subject: Re: [AB2C]", "To: SERVICE@winlink.org"])
+        self.assertReason(wrapped([text, attachment], subject="Re: nothing"), "no code")
+        self.assertReason(wrapped([text, attachment], to="bob@example.org"), "no service address")
 
 
 class SeparatorTests(Base):
@@ -498,12 +602,13 @@ class ChoiceTests(Base):
                      "#2", "(2)", "2)", "'2'", '"2"', "<2>", "[2]", "2 3 x", "1,2,3,x", "1-999999", "1-1000",
                      "0-5", "1-0", "01-5", "1-05", "1-2x", "x1-2", "2\\3", "2=3", "2*3", "2 and 3", "all", "ALL",
                      "FULL", "1 2 3 four", "2\x003", "2\x01", "2\x7f", "\x002", "2\x1b[0m", "2\x0b3", "MORE\x00",
-                     "1 000", "1,000", "2 .", "1 - 999", "0 1"):
+                     "1 000", "1,000", "2 .", "1 - 999", "0 1", "1_0", "1_000", "1-1_0", "1_0-3", "1__0",
+                     "MORE 1-999", "1-999 MORE", "MORE_1", "\u0000"):
             with self.subTest(text=text):
                 self.assertReason(express(text), "invalid choice")
 
     def test_invalid_range(self):
-        for text in ("3-2", "999-1", "20-19", "10-1", "5-4 1", "1 5-4", "2-1,3"):
+        for text in ("3-2", "999-1", "20-19", "10-1", "5-4 1", "1 5-4", "2-1,3", "MORE 5-4", "5-4 MORE", "5-4 junk"):
             with self.subTest(text=text):
                 self.assertReason(express(text), "invalid range")
 
@@ -535,6 +640,9 @@ class ChoiceTests(Base):
         self.assertReason(express("junk 5-4"), "invalid choice")
         self.assertReason(express("5-4 junk"), "invalid range")
         self.assertReason(express("5-4 1-999"), "invalid range")
+        # After every token is valid: MORE with others first, then the count.
+        self.assertReason(express("MORE 1-999"), "invalid choice")
+        self.assertReason(express("MORE 2"), "invalid choice")
 
     def test_large_inputs_are_fast_and_bounded(self):
         started = time.monotonic()
@@ -545,6 +653,54 @@ class ChoiceTests(Base):
         self.assertReason(plain(b"1-" + b"9" * 30000), "invalid choice")
         self.assertReason(plain(b"," * 30000 + b"\r\n" * 10000), "empty choice")
         self.assertLess(time.monotonic() - started, 5.0)
+
+
+class HostileHeaderTimingTests(Base):
+    """Quoted and parenthesised header values must not cost more than a moment.
+
+    email.policy.default needs tens of seconds on these inputs and raises
+    RecursionError on the last one; the parser must use email.policy.compat32.
+    """
+
+    LIMIT = 2.0
+
+    def timed(self, data):
+        self.assertLessEqual(len(data), 65536)
+        started = time.monotonic()
+        try:
+            result = parse_menu_reply(data)
+        except MenuReplyError as error:
+            result = error
+        self.assertLess(time.monotonic() - started, self.LIMIT)
+        return result
+
+    def test_content_type_of_quotes(self):
+        data = message(b"2\r\n", ctype='"' * 20000)
+        self.assertEqual(self.timed(data), MenuReply("K7QX", (2,), False))
+
+    def test_to_of_quotes(self):
+        result = self.timed(express(to='"' * 30000))
+        self.assertIsInstance(result, MenuReplyError)
+        self.assertEqual(result.reason, "no service address")
+
+    def test_sixty_parts_with_long_quoted_content_types(self):
+        parts = [part(b"2\r\n", 'text/plain; name="' + "a" * 970 + '"', None) for _ in range(60)]
+        data = wrapped(parts)
+        self.assertGreater(len(data), 60000)
+        self.assertEqual(self.timed(data), MenuReply("K7QX", (2,), False))
+
+    def test_content_type_of_open_parentheses(self):
+        data = message(b"2\r\n", ctype="(" * 30000)
+        self.assertEqual(self.timed(data), MenuReply("K7QX", (2,), False))
+
+    def test_other_headers_of_quotes_and_parentheses(self):
+        for name in ("Content-Disposition", "Content-Transfer-Encoding", "Subject", "Message-ID", "Cc", "From"):
+            for char in ('"', "(", "<", "\\"):
+                with self.subTest(header=name, char=char):
+                    base = express()
+                    data = base.replace(b"\r\n\r\n", f"\r\n{name}: {char * 20000}\r\n\r\n".encode(), 1)
+                    result = self.timed(data)
+                    self.assertTrue(isinstance(result, (MenuReply, MenuReplyError)))
 
 
 class LimitAndHardeningTests(Base):
@@ -569,6 +725,30 @@ class LimitAndHardeningTests(Base):
         for depth in (11, 12, 50, 400):
             with self.subTest(depth=depth):
                 self.assertReason(nested(depth), "malformed message")
+
+    def test_message_entities_count_as_containers(self):
+        for chain, expected in ((1, "no text part"), (9, "no text part"), (10, "malformed message"),
+                                (11, "malformed message"), (12, "malformed message"), (1000, "malformed message")):
+            with self.subTest(chain=chain):
+                ctype, body = multi([rfc822_chain(chain)])
+                data = message(body, ctype=ctype)
+                self.assertLess(len(data), 65536)
+                self.assertReason(data, expected)
+
+    def test_message_chain_at_top_level(self):
+        # The top-level message is the first container of the chain.
+        self.assertReason(head() + rfc822_chain(10), "no text part")
+        self.assertReason(head() + rfc822_chain(11), "malformed message")
+        self.assertReason(head() + rfc822_chain(1500), "malformed message")
+
+    def test_mixed_multipart_and_message_nesting(self):
+        # multipart > message > multipart > message ... alternating, 12 containers.
+        inner = part(b"2\r\n", "text/plain", None)
+        for level in range(6):
+            ctype, body = multi([inner], "mixed", f"M{level}")
+            inner = (f"Content-Type: {ctype}\r\n\r\n").encode() + body
+            inner = b"Content-Type: message/rfc822\r\n\r\n" + inner
+        self.assertReason(head() + inner, "malformed message")
 
     def test_deep_nesting_beside_a_found_text_part_is_still_malformed(self):
         first = part(b"2\r\n", "text/plain", None)

@@ -149,7 +149,7 @@ with no services configured, no line is a service command.
 
 - `services` must be a `frozenset` or `set`; any other type (including a
   bare `str`, which would iterate into single letters) raises `TypeError`.
-- Each verb must match `[A-Z][A-Z0-9_-]{0,31}` (ASCII upper case only), and
+- Each verb must be a `str` (anything else raises `TypeError`) and match `[A-Z][A-Z0-9_-]{0,31}` (ASCII upper case only), and
   `LIST` and `UPDATE_CAT` are not allowed. A bad verb raises `ValueError`
   that is not an `InquiryError`. `services` is checked first, before the
   subject and body, so a bad configuration never looks like a bad request.
@@ -202,13 +202,14 @@ line has no `|`. Every other kind keeps `arguments == ""` and `choice is None`.
 ### Rejected lines
 
 A service line that breaks a rule goes to `rejected` like any bad line,
-parsing continues, `RejectedLine.text` is the line cut to 80 characters with
-control characters replaced by `?`. Reasons, checked in this order, first
+parsing continues, `RejectedLine.text` is the line after comment removal and
+trimming (not collapsed, so `WIKI   a | b | c ; x` shows `WIKI   a | b | c`),
+cut to 80 characters with control characters replaced by `?`. Reasons, checked in this order, first
 match wins:
 
 | Reason | When |
 | --- | --- |
-| `invalid characters` | any non-ASCII character or control character (C0 other than tab, DEL) in the line after comment removal |
+| `invalid characters` | any non-ASCII character (including U+0085 and U+2028) or control character (C0 other than tab, such as `\x1c`, and DEL) in the line after comment removal |
 | `arguments too long` | more than 200 characters after collapsing |
 | `multiple choices` | a second `|` after the first |
 | `empty choice` | `|` present, choice empty after collapsing |

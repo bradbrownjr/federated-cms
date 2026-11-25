@@ -576,9 +576,16 @@ class ServiceCommandTests(unittest.TestCase):
     def test_invalid_characters(self):
         for line in ("WIKI caf\u00e9", "WIKI a | caf\u00e9", "WIKI a\x00b", "WIKI a\x7fb", "WIKI a\x1bb",
                      "WIKI a\x0bb", "WIKI \u00a0x", "WIKI a\u2003b", "WIKI a | \u200b1", "WIKI \U0001f600",
-                     "WIKI a\x0cb"):
+                     "WIKI a\x0cb", "WIKI a\x85b", "WIKI a\x1cb", "WIKI a\x1fb", "WIKI a\u2028b", "WIKI a\u2029b",
+                     "WIKI a | b\x85"):
             with self.subTest(line=line):
                 self.assertEqual(self.reasons(line), [(1, "invalid characters")])
+
+    def test_rejected_text_is_trimmed_not_collapsed(self):
+        request = self.parse("  WIKI   a | b | c ; x\n")
+        self.assertEqual([(r.reason, r.text) for r in request.rejected], [("multiple choices", "WIKI   a | b | c")])
+        request = self.parse("WIKI\t a\t|\t" + "c" * 81 + "\t;")
+        self.assertEqual(request.rejected[0].text, ("WIKI\t a\t|\t" + "c" * 81)[:80])
 
     def test_non_ascii_in_comment_is_ignored(self):
         self.assertEqual(self.one("WIKI Mercury ; caf\u00e9 \x00").arguments, "Mercury")
@@ -654,6 +661,12 @@ class ServiceCommandTests(unittest.TestCase):
         request = self.parse("A\nx1 y\nmy-svc | 1\n" + "a" * 32 + "\n", services=services)
         self.assertEqual([i.value for i in request.items], ["A", "X1", "MY-SVC", "A" * 32])
         self.assertEqual(self.parse("WIKI", services={"WIKI"}).items[0].kind, "service")  # a plain set works too
+
+    def test_non_str_verbs_raise_type_error(self):
+        for services in (frozenset({1}), frozenset({None}), frozenset({b"WIKI"}), frozenset({"WIKI", 5}), {("WIKI",)}):
+            with self.subTest(services=services):
+                with self.assertRaises(TypeError):
+                    parse_inquiry("REQUEST", "WIKI", services=services)
 
     def test_services_of_wrong_type_raise_type_error(self):
         for services in ("WIKI", ["WIKI"], ("WIKI",), None, {"WIKI": 1}.keys()):
