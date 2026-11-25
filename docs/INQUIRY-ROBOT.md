@@ -15,7 +15,11 @@ connection. It ties together pieces specified elsewhere:
 | Text extraction and `render` | `docs/TEXT-EXTRACTOR.md` | `feat/text-extractor` (933a74f) |
 | RSS/Atom parsing | `docs/FEED-READER.md` | `feat/feed-reader` (55727ed) |
 | Safe fetcher | `docs/FETCHER.md` | not pushed; being written |
-| Service-command and menu-reply parsing; `WX`/`ALERTS`/`SOLAR` formatters | not written yet | see [Interfaces for parallel specs](#interfaces-for-parallel-specs) |
+| Service commands in `parse_inquiry` | `docs/INQUIRY-ADAPTER.md` ("Service commands"), `src/federated_cms/inquiry.py` | `feat/service-commands` (ca60d99) |
+| Menu-reply parsing | `docs/MENU-REPLY.md`, `src/federated_cms/menu_reply.py` | `feat/service-commands` (ca60d99) |
+| `WX`/`ALERTS`/`SOLAR` formatters | `docs/WX-FORMATTERS.md`, `src/federated_cms/wx_format.py` | `feat/wx-formatters` (a029c94) |
+
+The robot's own parts are listed under [Interfaces](#interfaces).
 
 Line references are to `main` at 5d502c1 unless a branch is named.
 FETCHER.md is cited by section because it is still being edited. Marks:
@@ -218,20 +222,26 @@ For every message:
 `parse_inquiry` (`inquiry.py:110-145`) gives items and rejected lines,
 capped at 32 items with repeats removed (`INQUIRY-ADAPTER.md:56-58`). A
 bad subject or empty body (`InquiryError`) gets one error reply. The
-command spec extends the parser so a line starting with a verb, `HELP` or
-`HELP <verb>` is kind `command`; recognition order is `LIST`/`UPDATE_CAT`,
-URL, reserved word or verb, catalog ID.
+robot calls `parse_inquiry(subject, body, services=...)` with the
+configured verbs plus `HELP` (the parser reserves only `LIST` and
+`UPDATE_CAT`). A line whose first word is one of those verbs is kind
+`service`: `value` is the verb, `arguments` the text before `|`, `choice`
+the text after it or `None`. A service verb wins over a catalog ID of the
+same name. Recognition order is a service verb, `LIST`/`UPDATE_CAT`, URL,
+catalog ID.
 
 | Item | Action | Reply subject |
 | --- | --- | --- |
 | `list`, `update_catalog` | Catalog from the loaded TSV, no network | `INQUIRY: LIST` (observed, `INQUIRY-ADAPTER.md:93`) |
-| `HELP` / `HELP WX` | Verbs with descriptions / that handler's `help()` | `INQUIRY - HELP` / `INQUIRY - HELP WX` |
-| `catalog` | `text:` file content; `url:` as a URL item; `cmd:` as a command; unknown ID is an error | `INQUIRY - <url>` for `url:` (observed, `INQUIRY-ADAPTER.md:75-77`), else `INQUIRY - <ID>` |
+| `service` `HELP` with no / one argument (`HELP WX`) | Verbs with descriptions / that handler's `help()` | `INQUIRY - HELP` / `INQUIRY - HELP WX` |
+| `catalog` | `text:` file content; `url:` as a URL item; `cmd:` as a service item (parsed with `parse_inquiry`); unknown ID is an error | `INQUIRY - <url>` for `url:` (observed, `INQUIRY-ADAPTER.md:75-77`), else `INQUIRY - <ID>` |
 | `url` | Error if `url_items` is off; else cache, `extract`, `render` | `INQUIRY - <url>` |
-| other `command` | Handler `step()` loop | `INTERACTIVE-SERVICES.md:39-43` |
+| other `service` | Handler `step()` loop | `INTERACTIVE-SERVICES.md:39-43` |
 
 Rejected lines get **one** reply for the message: line number, cleaned
-text (`RejectedLine.text`) and reason for each, then the `HELP` list.
+text (`RejectedLine.text`) and reason (`RejectedLine.reason`, which names
+the broken service-line rule such as `arguments too long`) for each, then
+the `HELP` list.
 Which `LIST` format Express accepts is untested
 (`INQUIRY-ADAPTER.md:120-123`); slice 1 sends a readable list and the lab
 tries the `CATEGORY|ID|DESCRIPTION|SIZE|DATE` form.
@@ -251,20 +261,37 @@ is used for that message only and not stored.
 
 ### `SERVICE` (menu replies)
 
-1. `parse_menu_reply` (command spec) strips leading `Re:`s, finds
-   `[CODE]`, and reads only lines before the quoted-original separator
-   (`INTERACTIVE-SERVICES.md:120-131`).
-2. No code: one error reply saying requests go to `INQUIRY` with subject
-   `REQUEST`. Counts as invalid (section 6).
+The robot picks `SERVICE` mail by `address_local_part` of the recipient
+(`service_for` returns only `INQUIRY` and `QTH`).
+
+1. `parse_menu_reply(raw_message)` (`menu_reply.py`; `MENU-REPLY.md`) takes
+   the whole stored MIME message as bytes, not a subject and body. It
+   checks the `To` address, finds the one `[CODE]` anywhere in the
+   subject, reads the first `text/plain` part and only the lines before
+   the quoted-original separator. It returns `MenuReply(code, numbers,
+   more)` or raises `MenuReplyError` with a `reason`. Messages over
+   65,536 bytes are refused (`too large`), the same size as
+   `MAX_MESSAGE`; the robot passes the stored message unchanged.
+2. `no code`, `multiple codes` or `invalid code`: one error reply saying
+   requests go to `INQUIRY` with subject `REQUEST`. Any other
+   `MenuReplyError` (`too large`, `malformed message`, `no text part`,
+   `unsupported transfer encoding`, `non-ASCII`, `empty choice`,
+   `invalid choice`, `invalid range`, `too many choices`): one error
+   reply naming the reason and saying to answer with option numbers,
+   such as `2` or `1-3`, or `MORE`. The parser does not return the code
+   with an error, so the menu is not sent again. Both kinds count as
+   invalid (section 6). `no service address` cannot happen for mail the
+   robot routed to `SERVICE`; it is logged as `internal_error`.
 3. Look up `(account, code)`. Another callsign's code is simply not
    found; nothing distinguishes "someone else's" from "unknown".
 4. Unknown or expired: say so, and while the row exists (until
    `purge_after`) list its options as full commands to resend to
    `INQUIRY`.
-5. Unreadable choice: the menu again, same code, with one line saying
-   what was not understood.
-6. Valid: each number becomes an item running the option's stored
-   command as if sent to `INQUIRY`, capped at 32 (`2-40` is 39 items).
+5. A number with no stored option: one error reply naming the numbers
+   and the menu's valid range.
+6. Valid: each number (sorted, no repeats, at most 20 per reply) becomes
+   an item running the option's stored command as if sent to `INQUIRY`
+   (`2-21` is 20 items).
 7. `MORE`: the next page (section 4).
 
 ## 4. Menu-code store
@@ -325,9 +352,10 @@ class CacheEntry:  key: str; status: int   # non-2xx cached too (NWS 404 Invalid
 class Need:        fetches: tuple[FetchSpec, ...]
 class MenuOption:  label: str; command: str            # command e.g. "WIKI Mercury (planet)"
 class Menu:        title: str; options: tuple[MenuOption, ...]
+                   listed_in_body: bool = False   # True: the body already prints the options
 class ReplyPart:   label: str              # subject text after "INQUIRY - "
                    body: str               # ASCII, "\n" endings
-                   menu: Menu | None       # coded and rendered by the robot
+                   menu: Menu | None       # stored and coded by the robot; rendered by it unless listed_in_body
 class Answer:      parts: tuple[ReplyPart, ...]; error: str | None = None
 class ItemContext: account: str; now: datetime; node_name: str; max_chars: int
                    position: tuple[float, float] | None  # QTH, else X-Location, else None
@@ -339,7 +367,7 @@ class Service(Protocol):
     def validate_options(cls, options: Mapping[str, object]) -> list[str]: ...  # errors
     def help(self) -> str: ...
     def scheduled(self) -> tuple[tuple[FetchSpec, timedelta], ...]: ...         # prefetch, with interval
-    def step(self, cmd: ServiceCommand, ctx: ItemContext,
+    def step(self, item: InquiryItem, ctx: ItemContext,
              cache: Mapping[str, CacheEntry]) -> Need | Answer: ...
 ```
 
@@ -372,9 +400,8 @@ same forecast costs no fetch.
 Config may override any value per service. Response `Cache-Control` is
 not used; the table is the rule. The fetcher takes no extra request
 headers (FETCHER.md, "`fetch`"), so there is no `ETag` revalidation; a
-refresh is a full fetch. An `ALERTS` reply from stale data starts:
-`NOT CURRENT: could not reach NWS; list from 04:32Z (47 min ago). Alerts
-may have been issued or cancelled since.`
+refresh is a full fetch. A `WX` or `ALERTS` reply from stale data is
+built with `format_nws_error` (see "When the Internet is down").
 
 ### Tables
 
@@ -436,9 +463,13 @@ CREATE INDEX robot_item_waits_key ON robot_item_waits(cache_key);
 ### When the Internet is down
 
 If a fetch fails and an entry younger than `max_stale` exists, the item
-is answered from it at once with its age: `NWS unavailable; forecast
-below is from 2026-11-25 04:33 UTC (3 h old).`
-(`INTERACTIVE-SERVICES.md:347-348`). Otherwise the item waits and is
+is answered from it at once with its age. For `WX` and `ALERTS` the
+handler formats the stale entry as usual, then calls
+`format_nws_error(service, None, ..., cached=<that reply>, cached_at=<entry
+fetched_at>, now=now)`, which gives `NWS unavailable, try later.` and
+`Older reply follows, age N min.` before the cached reply
+(`WX-FORMATTERS.md`, "Errors"). Other services state the age in their own
+wording. Otherwise the item waits and is
 retried until `max_wait_minutes` (6 h), then gets "could not reach NWS;
 try later". Fresh data is never invented (`docs/DECISIONS.md:33`,
 `docs/THREAT-MODEL-M0.md:71`).
@@ -451,7 +482,7 @@ and are to be revisited after lab measurement.
 
 | Limit (`[limits]` key) | Default | Counted from | Checked |
 | --- | --- | --- | --- |
-| Items per request (`items_per_request`) | 32 | Parser (`INQUIRY-ADAPTER.md:56-58`); menu selections | Parse |
+| Items per request (`items_per_request`) | 32 | Parser (`INQUIRY-ADAPTER.md:56-58`); a menu reply selects at most 20 numbers (`MENU-REPLY.md`) | Parse |
 | Requests per hour (`requests_per_hour`) | 10 | `robot_inbox`, rolling 60 min | Parse, before any item |
 | Messages per day (`messages_per_day`) | 100 | `robot_replies` since 00:00 UTC | Before fetching, and at reply commit |
 | Bytes per day (`bytes_per_day`) | 1,000,000 | `robot_replies.body_bytes` since 00:00 UTC | Reply commit |
@@ -548,8 +579,12 @@ other character in a label becomes `?`.
 **Body:**
 
 1. Handler text or `render` output (`TEXT-EXTRACTOR.md:212-232`).
-2. For menus, the block from the menu spec's `render_menu`
-   (`INTERACTIVE-SERVICES.md:55-74`).
+2. For menus, the block from the robot's menu renderer
+   (`INTERACTIVE-SERVICES.md:55-74`): numbered options with their
+   commands, then the code and reply instructions. `WX` and `ALERTS`
+   text from `wx_format` already holds the numbered options and their
+   commands, so for those the renderer adds only the code and
+   instructions (`Menu.listed_in_body`).
 3. The source footer each service requires (NWS, Wikipedia, feeds).
 4. Checked to be printable ASCII plus `\n`; anything else is a bug that
    fails the item with `internal_error` instead of sending it.
@@ -745,56 +780,87 @@ against the loopback B2F server.
 4. **Menus and `SERVICE` replies.** Codes, expiry, `MORE`, numbers run as
    commands, expired-menu replies; tested with a test-only handler that
    returns a fixed menu.
-5. **`WX`, `ALERTS`, `SOLAR`.** Formatters behind handlers; NWS and SWPC
-   fixtures saved from real responses; place from QTH or `X-Location`.
+5. **`WX`, `ALERTS`, `SOLAR`.** Handlers that call the `wx_format`
+   functions; NWS and SWPC fixtures are in `tests/fixtures/`; place from
+   QTH or `X-Location`.
 6. **`NEWS`, then `WIKI`.** Feed schedules, digest and item menus,
    splitting.
 7. **Limits and metrics.** Defaults from lab measurements, node-wide
    caps, `status`. Per-account counting exists from slice 1.
 
-## Interfaces for parallel specs
+## Interfaces
 
-Proposals for the two specs being written to accept or change.
+Written and tested; the robot calls these and does not reimplement them.
+The specs win over this document.
 
-**Service commands and menu replies** (module `federated_cms.commands`):
-
-```python
-class ServiceCommand:  verb: str        # upper-case, a configured verb or HELP
-                       args: str        # whitespace collapsed, <= 200 chars
-                       choice: str | None  # text after "|": "3", "FULL", "3 FULL"
-def parse_command(line: str, verbs: frozenset[str]) -> ServiceCommand | None
-    # None: not a command; the caller tries a catalog ID next
-class MenuReply:       code: str; more: bool
-                       numbers: tuple[int, ...]  # ranges expanded, order kept, repeats removed
-class MenuReplyError(ValueError): ...   # no code, or text not numbers/ranges/MORE
-def parse_menu_reply(subject: str, text: str) -> MenuReply
-def render_menu(menu: Menu, *, code: str, account: str,
-                expires_at: datetime, first_n: int, has_more: bool) -> str
-```
-
-`parse_inquiry` gains a `verbs` argument so command lines become kind
-`command`, and `service_for` (`inquiry.py:102-107`) also returns
-`SERVICE`.
-
-**`WX`, `ALERTS`, `SOLAR` formatters** (module `federated_cms.wxformat`):
-pure functions from fetched bytes to text, called from a handler's `step`
-once its keys are cached.
+**Service commands** (`federated_cms.inquiry`, `INQUIRY-ADAPTER.md`):
 
 ```python
-class Formatted:  label: str        # subject label, e.g. "WX 43.6,-70.7"
-                  body: str         # ASCII, "\n" endings, footer included
-                  options: tuple[MenuOption, ...]
-def format_wx(place: str, points: bytes, forecast: bytes, *,
-              forecast_fetched_at: datetime, full: bool, now: datetime) -> Formatted
-def format_alerts(place: str, alerts: bytes, *, fetched_at: datetime,
-                  stale: bool, index: int | None, now: datetime) -> Formatted
-def format_solar(products: Mapping[str, tuple[bytes, datetime] | None], *,
-                 now: datetime) -> Formatted  # product path -> (content, fetched_at), None if never fetched
+parse_inquiry(subject: str, body: str, *, services: frozenset[str] = frozenset()) -> InquiryRequest
+InquiryRequest(items: tuple[InquiryItem, ...], rejected: tuple[RejectedLine, ...])
+InquiryItem(kind: str, value: str, arguments: str = "", choice: str | None = None)
+RejectedLine(line_number: int, text: str, reason: str)
 ```
 
-Bad data (NWS problem details, missing fields) raises
-`FormatError(ValueError)` with a short code the robot maps to an error
-reply.
+`services` is a `frozenset` or `set` of verbs matching
+`[A-Z][A-Z0-9_-]{0,31}`, never `LIST` or `UPDATE_CAT`; a wrong type
+raises `TypeError` and a bad verb `ValueError`, both before the request
+is read. A service line has `kind="service"`, `value` the verb,
+`arguments` (at most 200 characters), `choice` (at most 80, or `None`).
+`InquiryError` is raised for a bad subject, empty body or empty request.
+`service_for` returns only `INQUIRY` and `QTH`.
+
+**Menu replies** (`federated_cms.menu_reply`, `MENU-REPLY.md`):
+
+```python
+parse_menu_reply(message: bytes) -> MenuReply
+MenuReply(code: str, numbers: tuple[int, ...], more: bool)
+MenuReplyError(ValueError)   # .reason, one of the listed reasons
+```
+
+`message` is the whole MIME message; anything else raises `TypeError`.
+Only `MenuReplyError` escapes for bytes. `numbers` are sorted, unique,
+1 to 999, at most 20; empty when `more`.
+
+**Formatters** (`federated_cms.wx_format`, `WX-FORMATTERS.md`). They take
+parsed JSON (`json.loads` results) and timezone-aware times, and return
+`str`: ASCII, lines of at most `LINE_MAX` (69), attribution included.
+They raise only `WxFormatError(ValueError)`.
+
+```python
+format_wx(points: dict, forecast: dict, *, place: str, node: str, now: datetime, full: bool = False) -> str
+format_alerts(alerts: dict, *, place: str, node: str, checked_at: datetime, limit: int = 5) -> str
+format_alert_full(alerts: dict, number: int, *, place: str, node: str, checked_at: datetime) -> str
+format_solar(*, fetched_at: datetime, now: datetime, flux=None, kp_3h=None, kp_1m=None,
+             scales=None, xray=None, forecast_3day=None, daily_indices=None) -> str
+format_nws_error(service: str, problem: dict | None, *, place: str, node: str,
+                 cached: str | None = None, cached_at: datetime | None = None,
+                 now: datetime | None = None) -> str
+xray_class(flux: int | float) -> str
+```
+
+**What the robot owns:**
+
+- The verb table and the `services` set passed to `parse_inquiry`
+  (configured verbs plus `HELP`), and `HELP` output.
+- Routing by recipient (`INQUIRY`, `QTH`, `SERVICE`) and the stored raw
+  message handed to `parse_menu_reply`.
+- Menu codes, the `robot_menus` rows, number-to-command lookup, expiry,
+  paging and `MORE`, and rendering the code and reply instructions. A
+  `Menu` is built by the handler, not by the formatters, which return
+  text only: `format_wx` prints options `WX <place> | FULL` and
+  `WX <place> | ALERTS`; `format_alerts` prints `ALERTS <place> | k` for
+  each block shown (at most `limit`). The handler builds the matching
+  `Menu` with `listed_in_body=True` from the same commands.
+- Turning a formatter's `str` into a `ReplyPart`: the subject label (for
+  example `WX 43.6,-70.7`, cut to 80 characters), splitting, and the
+  place label passed as `place`, which is also a valid command argument.
+- Fetching, caching, the stale-data choice and passing `cached` and
+  `cached_at` to `format_nws_error`, and fetching the seventh SOLAR
+  product `daily_indices` (`text/daily-solar-indices.txt`) with the other
+  six.
+- Item-level errors for non-NWS failures, and everything else in this
+  document.
 
 ## Decisions
 
