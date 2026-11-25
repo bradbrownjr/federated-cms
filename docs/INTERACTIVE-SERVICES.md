@@ -105,39 +105,84 @@ are dispatched only through that table; nothing in a message is ever run
 as code. (radiomail, an earlier project, used `eval` on the subject;
 this design must never do that.)
 
-### `WIKI <subject>`
+### `WIKI <subject> [| choice]`
 
-Wikipedia articles as plain text. Language set per node (default `en`).
+Wikipedia articles as plain text, **summary by default**. Language set
+per node (default `en`).
+
+| Command | Reply |
+| --- | --- |
+| `WIKI Mercury (planet)` | Summary (the lead section), then a menu |
+| `WIKI Mercury (planet) \| FULL` | The whole article, split across messages |
+| `WIKI Mercury (planet) \| FACTS` | The infobox only |
+| `WIKI Mercury (planet) \| Orbit` | One section, by name or menu number |
+
+`|` separates the title from the choice; it cannot occur in a title
+(MediaWiki *Manual:Page title*, naming restrictions).
+
+**The summary's menu:**
+
+```text
+1. Full article (about 70,000 characters, 6 messages)
+2. Facts box
+3. Nomenclature
+4. Physical characteristics
+...
+```
+
+The full-article size is measured before the menu is sent, so the user
+sees the cost in messages before asking for it. Sections listed are the
+top-level ones; a section includes its subsections. `| 1`, `| 2` and so
+on pick from this menu, so `WIKI Mercury (planet) | 1` is the full
+article.
+
+Steps:
 
 1. **Search:** `action=query&list=search&srsearch=<subject>&srlimit=10`.
 2. **Exact match:** when a result's title equals the subject
    (case-insensitive, after redirects), check it with
    `prop=pageprops&ppprop=disambiguation`. A page with the
    `disambiguation` property is not an article.
-3. **Article:** for an exact, non-disambiguation match, fetch
-   `action=parse&page=<title>&prop=text&formatversion=2&redirects=1&disabletoc=1&disableeditsection=1`
-   and send the article, with up to five other results as an "Other
-   articles" menu at the end.
-4. **Otherwise:** a menu of the search results, without disambiguation
-   pages.
-5. **Cleanup:** before the HTML reaches the extractor, remove
+3. **No exact article match:** a menu of the search results, without
+   disambiguation pages. A choice gives that article's summary.
+4. **Summary:** `action=parse&page=<title>&prop=text&section=0`, plus
+   `formatversion=2&redirects=1&disabletoc=1&disableeditsection=1` on
+   every parse call. The infobox is left out. Then the menu above, plus
+   up to five other search results as "Other articles".
+5. **Sections:** `action=parse&page=<title>&prop=sections` gives each
+   section's `index`, `toclevel` and `line`; a section is fetched with
+   `section=<index>`.
+6. **Full article:** `action=parse` without `section`, cleaned, then
+   split at line breaks into parts of at most `max_chars`, one message
+   each, subject `INQUIRY - WIKI Mercury (planet) (part 2 of 6)`. Every
+   part counts against the callsign's message limit. Needs a `split`
+   function beside the extractor's truncation (a change to
+   [TEXT-EXTRACTOR.md](TEXT-EXTRACTOR.md)).
+7. **Facts:** the infobox table only (the element with class
+   `infobox`).
+8. **Cleanup:** before the HTML reaches the extractor, remove
    Wikipedia's own clutter by class: reference markers and lists,
-   navboxes, infoboxes, sidebars, hatnotes, maintenance boxes, and
-   anything marked `noprint`. This needs a `drop_classes` option in
-   `html_to_text` (a change to [TEXT-EXTRACTOR.md](TEXT-EXTRACTOR.md)).
-   The exact class list comes from saved real pages, kept as test
-   fixtures.
-6. **Attribution:** every article ends with
-   `From Wikipedia: <article URL>. Text CC BY-SA 4.0
+   navboxes, sidebars, hatnotes, maintenance boxes, anything marked
+   `noprint`, and (except for `FACTS`) infoboxes. This needs a
+   `drop_classes` option in `html_to_text`. The exact class list comes
+   from saved real pages, kept as test fixtures.
+9. **Attribution:** every reply, and every part of a split article, ends
+   with `From Wikipedia: <article URL>. Text CC BY-SA 4.0
    (https://creativecommons.org/licenses/by-sa/4.0/); converted to plain
    text.` Wikipedia's copyright page asks for a link to the article, a
    licence notice, and a note that the text was changed.
-7. **API manners** (API:Etiquette and the Wikimedia User-Agent policy):
-   one request at a time, `Accept-Encoding: gzip`, and a User-Agent of
-   the form `<client>/<version> (<contact>)`. The sysop must configure
-   the contact (an email address or website); the service refuses to
-   start without it, because Wikimedia may reject generic or empty
-   agents with HTTP 403.
+10. **API manners** (API:Etiquette and the Wikimedia User-Agent policy):
+    one request at a time, `Accept-Encoding: gzip`, and a User-Agent of
+    the form `<client>/<version> (<contact>)`. The sysop must configure
+    the contact (an email address or website); the service refuses to
+    start without it, because Wikimedia may reject generic or empty
+    agents with HTTP 403.
+
+Measured on `Mercury (planet)`, 2026-11-25, before any class cleanup:
+the lead section is 67 KB of HTML and 8,870 characters of text, mostly
+infobox; the full article is 643 KB of HTML, 26 sections and about
+111,000 characters. The menu figures above are illustrative until
+cleanup is in place.
 
 The TextExtracts API (`prop=extracts`) is not used: its documentation
 says it is not actively maintained and asks that no new features be
@@ -185,5 +230,5 @@ Set per node, applied per callsign:
 
 - Reply parsing details (above), from the Express capture.
 - Default rate limits.
-- Whether a content reply over the size limit should be split across
-  several messages or cut with a note (the extractor cuts today).
+- Whether other services also split long content across messages, as
+  `WIKI | FULL` does, or cut it with a note (the extractor cuts today).
