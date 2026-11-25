@@ -1,8 +1,6 @@
 # Interactive services
 
-**Status:** draft design. Nothing here is implemented. The section on
-reading replies waits for a capture of a real Winlink Express reply
-(test 2 in [ON-AIR-TESTS.md](ON-AIR-TESTS.md)).
+**Status:** draft design. Nothing here is implemented.
 
 A user asks for something, the node answers with the content or with a
 short numbered menu, and the user replies with their choice. It is intended
@@ -86,17 +84,56 @@ Menu K7QX for N0CALL, valid until 2026-12-02 01:00 UTC.
 
 ### Reading a reply
 
-**Pending the Express capture.** What is planned:
+**Observed** (Winlink Express, reply to a `SERVICE` message saved to the
+Outbox, 2026-11-25; callsign and position replaced here):
 
-- The message is to `SERVICE` (any domain), and the subject contains
-  `[CODE]`. A leading `Re:` or similar is ignored.
-- The choice is taken from the first non-blank lines of the body, before
-  any quoted original message: numbers, ranges such as `2-4`, or `MORE`,
-  separated by spaces or commas. Anything else on those lines makes the
-  reply invalid, and the user gets the menu again.
-- To be confirmed from the capture: how Express marks quoted text,
-  whether it changes the subject, and which headers carry the original
-  message ID (which could replace the subject code).
+```text
+Subject: Re: INQUIRY - <original subject>
+To: SERVICE@winlink.org
+Message-ID: <12 characters>
+X-Location: 43.645833N, 70.708333W (Grid square)
+Content-Type: multipart/mixed; boundary="..."
+
+  text/plain; charset="iso-8859-1", quoted-printable:
+2
+----- Message from SERVICE sent 2026/11/25 00:00 -----
+
+Message ID: <original message ID>
+Date: 2026/11/25 00:00  (UTC)
+From: SERVICE
+To: N0CALL
+Source: SYSTEM
+Subject: INQUIRY - <original subject>
+
+<original body, not indented or marked>
+```
+
+- Express adds `Re: ` and keeps the rest of the subject, so the menu code
+  survives.
+- It sends no `In-Reply-To` or `References` header. The subject code is
+  the only reliable link to the menu.
+- The original follows a separator line and is not marked with `>`.
+- The part is declared `iso-8859-1`, but the quoted original carried
+  UTF-8 bytes (`=C2=A0`), so the declared charset is not reliable for
+  the quoted text.
+
+**Rules:**
+
+- The message is to `SERVICE` (any domain), and the subject, after any
+  number of leading `Re:` (case-insensitive), contains `[CODE]`.
+- The choice is read from the text part's lines before the first line
+  matching `^----- Message from .+ sent \d{4}/\d{2}/\d{2} \d{2}:\d{2} -----$`
+  (or the whole part when there is none). Blank lines are skipped. The
+  remaining lines must hold only numbers, ranges such as `2-4`, or
+  `MORE`, separated by spaces or commas, in ASCII. Anything else makes
+  the reply invalid, and the user gets the menu again.
+- Only those lines are decoded and read, so the quoted text's encoding
+  does not matter.
+
+**Position from the message.** Express sends the sender's position in
+`X-Location` (here a grid-square centre). It is the default place for
+`WX` and `ALERTS` when the request names none and no QTH report is on
+file.
 
 ## Services
 
@@ -260,10 +297,10 @@ US weather forecasts from the National Weather Service (NWS).
 | Latitude, longitude | `WX 43.6,-70.7` | Used as given |
 | NWS zone ID | `WX MEZ023` | Zone forecast endpoint (see below) |
 | Town and state | `WX Waterboro ME` | Local town table |
-| Nothing | `WX` | The sender's last QTH position report |
+| Nothing | `WX` | The sender's last QTH position report, else the request's `X-Location` header |
 
-With no place and no position report on file, the reply says how to send
-a position report or give a place.
+With no place, no position report on file and no `X-Location`, the reply
+says how to send a position report or give a place.
 
 **Town table:** built from the USGS GNIS Populated Places file
 (`https://prd-tnm.s3.amazonaws.com/StagedProducts/GeographicNames/Topical/PopulatedPlaces_National_Text.zip`),
@@ -425,7 +462,6 @@ Set per node, applied per callsign:
 
 ## Open questions
 
-- Reply parsing details (above), from the Express capture.
 - Default rate limits.
 - Whether other services also split long content across messages, as
   `WIKI | FULL` does, or cut it with a note (the extractor cuts today).
