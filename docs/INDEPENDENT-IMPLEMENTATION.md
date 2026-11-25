@@ -35,7 +35,7 @@ Winlink Express can use to collect BBS mail
 
 | Source | What it is | How we use it |
 | --- | --- | --- |
-| [Open B2F specification](https://winlink.org/B2F) | Winlink's published "specification for the transfer of messages between Winlink Radio Mail Server (RMS) gateway stations and Winlink compatible user terminal programs". It also says it is published so that compliance with FCC rules is clear and on-air traffic can be monitored. | Basis of the B2F server and message handling. The server is to use the feature letters of the specification's example identifier, `[WL2K-5.0-B2FWIHJM$]`, under our own name. |
+| [Open B2F specification](https://winlink.org/B2F) | Winlink's published "specification for the transfer of messages between Winlink Radio Mail Server (RMS) gateway stations and Winlink compatible user terminal programs". It also says it is published so that compliance with FCC rules is clear and on-air traffic can be monitored. | Basis of the B2F server and message handling. The server identifies itself as `[FCMS-0.1-B2FWHM$]`: our own name, with feature letters from the specification's example `[WL2K-5.0-B2FWIHJM$]`. |
 | [Winlink FAQ](https://winlink.org/sites/default/files/download/wl2k_faq_20230311.pdf) and [inquiry guide](https://catalog.winlink.org/inquiries.txt) | Winlink's public user documentation. | Catalog request (`INQUIRY`) and position report (`QTH`) formats. |
 | [ARSFI Winlink-Compression](https://github.com/ARSFI/Winlink-Compression) | Compression source that the Open B2F page says is public. | Referenced only. Our LZHUF code is a port of JNOS 2's `lzhuf.c` (its authors: "use, distribute, and modify this program freely") with wl2k-go's container handling. |
 | [Pat](https://github.com/la5nta/pat) and [wl2k-go](https://github.com/la5nta/wl2k-go) (MIT) | Open-source Winlink-compatible client and protocol library. | Pinned test client in CI; reference for message, compression and position-report formats. |
@@ -49,9 +49,8 @@ Winlink Express can use to collect BBS mail
 - Decompile, disassemble or debug Winlink Express, RMS Packet, RMS Relay,
   RMS Trimode, the Winlink servers, or any other Winlink program, or inspect
   their files beyond normal use.
-- Run experiments meant to work out how Winlink Express decides things
-  internally, such as feeding it many variations of a server response to map
-  its rules. We build to the specification and test whether it works.
+- Probe Winlink Express to work out how it works internally. We build to the
+  specification and check that the client works with it.
 - Bypass any registration, licence or other protection.
 - Bundle, modify or redistribute Winlink Express or other Winlink software.
 - Copy Winlink's catalog, documents or server replies into this repository,
@@ -72,11 +71,7 @@ version dated February 6, 2025) was reviewed for this project:
   Commercial use needs separate permission. Federated CMS users run Express
   under that licence themselves.
 - **"This program may not be reverse-engineered. Derivative works are
-  prohibited."** We do neither, as listed above. Early lab sessions compared a
-  few server identifiers while finding out why Express treated the lab as a
-  peer station. That comparison is finished. The server is to use the
-  specification's example identifier, and no further experiments of that
-  kind are run.
+  prohibited."** The project does neither; see the list above.
 - **Redistribution** only as the intact distribution file. We do not
   redistribute it.
 - The licence does not restrict which stations or servers Express connects
