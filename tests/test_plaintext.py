@@ -409,12 +409,15 @@ base = time.perf_counter() - t
 budget = 4 * base + 2
 def over(*_):
     sys.exit(f"over budget: baseline {{base:.2f}} s, limit {{budget:.2f}} s")
-signal.signal(signal.SIGALRM, over)
-signal.setitimer(signal.ITIMER_REAL, budget)
+ALARM = hasattr(signal, "SIGALRM")  # Windows has none: the check below still applies
+if ALARM:
+    signal.signal(signal.SIGALRM, over)
+    signal.setitimer(signal.ITIMER_REAL, budget)
 t = time.perf_counter()
 {work}
 took = time.perf_counter() - t
-signal.setitimer(signal.ITIMER_REAL, 0)
+if ALARM:
+    signal.setitimer(signal.ITIMER_REAL, 0)
 print(f"baseline {{base:.2f}} s, extractor {{took:.2f}} s, ratio {{took / base:.1f}}")
 if took > budget:
     sys.exit(f"over budget: baseline {{base:.2f}} s, extractor {{took:.2f}} s")
