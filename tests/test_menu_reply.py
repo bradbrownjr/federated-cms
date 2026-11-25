@@ -209,6 +209,13 @@ class RecipientTests(Base):
         self.assertReason(express(to="bob@example.org", extra=["Reply-To: FCMS@lab.example"]), "no service address")
         self.assertReason(express(to="bob@example.org", extra=["From: FCMS@lab.example"]), "no service address")
 
+    def test_to_with_cc_accepted_cc_alone_is_not(self):
+        self.assertReply(express(to="FCMS", extra=["Cc: bob@example.org"]))
+        self.assertReply(express(to="FCMS@lab.example", extra=["Cc: FCMS@lab.example"]))
+        for cc in ("FCMS", "fcms@lab.example", "SMTP:FCMS@lab.example"):
+            with self.subTest(cc=cc):
+                self.assertReason(express(to="N0CALL", extra=["Cc: " + cc]), "no service address")
+
     def test_missing_or_garbage(self):
         self.assertReason(express(to=None), "no service address")
         self.assertReason(b"", "no service address")
@@ -248,6 +255,49 @@ class RecipientTests(Base):
 
     def test_recipient_is_checked_before_the_subject_and_body(self):
         self.assertReason(express("junk", to="bob@example.org", subject="nothing"), "no service address")
+
+
+class ErrorCodeTests(Base):
+    """MenuReplyError.code: the subject's code once step 4 has passed, else None."""
+
+    def code_of(self, data):
+        with self.assertRaises(MenuReplyError) as caught:
+            parse_menu_reply(data)
+        return caught.exception.reason, caught.exception.code
+
+    def test_constructor(self):
+        self.assertIsNone(MenuReplyError("no code").code)
+        error = MenuReplyError("invalid choice", code="K7QX")
+        self.assertEqual((error.reason, error.code, str(error)), ("invalid choice", "K7QX", "invalid choice"))
+
+    def test_errors_after_the_code_carry_it(self):
+        cases = [
+            (express("WIKI Venus"), "invalid choice"),
+            (express("HELP", subject="Re: [test] x"), "invalid choice"),
+            (express(""), "empty choice"),
+            (express("5-4"), "invalid range"),
+            (express("1-21"), "too many choices"),
+            (express("caf\u00e9"), "non-ASCII"),
+            ((FIXTURES / "html_only.eml").read_bytes(), "no text part"),
+            (wrapped([part(b"Mg==\r\n", TEXT, "base64 (comment)")]), "unsupported transfer encoding"),
+        ]
+        for data, reason in cases:
+            with self.subTest(reason=reason):
+                expected_code = "TEST" if b"[test]" in data else "K7QX"
+                self.assertEqual(self.code_of(data), (reason, expected_code))
+
+    def test_errors_before_the_code_carry_none(self):
+        cases = [
+            (b"x" * 70000, "too large"),
+            (express(extra=["Subject: Re: [AB2C]"]), "malformed message"),
+            (express(to="N0CALL"), "no service address"),
+            (express(subject="Re: x"), "no code"),
+            (express(subject="Re: [K7QI]"), "invalid code"),
+            (express(subject="Re: [K7QX] [AB2C]"), "multiple codes"),
+        ]
+        for data, reason in cases:
+            with self.subTest(reason=reason):
+                self.assertEqual(self.code_of(data), (reason, None))
 
 
 class AddressArgumentTests(Base):
@@ -308,6 +358,11 @@ class SubjectTests(Base):
                         "Re: INQUIRY - WIKI Mercury: choose [k7qx]", "Re: x [K7qX] y"):
             with self.subTest(subject=subject):
                 self.assertReply(express(subject=subject))
+
+    def test_bracketed_words_are_codes(self):
+        # Whether the account holds such a menu is the robot's check (docs/INQUIRY-ROBOT.md, section 3).
+        self.assertReply(express(subject="Re: [TEST] WX"), "TEST")
+        self.assertReply(express(subject="[news] today"), "NEWS")
 
     def test_code_is_returned_upper_case(self):
         self.assertEqual(parse_menu_reply(express(subject="Re: [ab2c]")).code, "AB2C")

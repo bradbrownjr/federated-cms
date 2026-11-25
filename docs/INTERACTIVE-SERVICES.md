@@ -32,7 +32,9 @@ straight to the content, and choices can be given in advance.
 
 ## Native requests
 
-A message whose `To:` or `Cc:` holds the service address.
+A message whose `To:` holds the service address. `Cc:` does not count, for
+this address and for `INQUIRY` and `QTH`: a message with the address only in
+`Cc:` is not robot mail.
 
 - **Subject:** any text. It is not read for commands; only a menu code
   matters (see [Reading a reply](#reading-a-reply)). Whether Express
@@ -57,16 +59,17 @@ A message whose `To:` or `Cc:` holds the service address.
   reply](#reading-a-reply)). A user can answer any reply with Reply, type
   new commands above the quote, and send.
 - **Lines that are not commands** get one reply for the message, listing
-  each line and its reason: `unknown command` (the reply includes the
+  each line and its reason (at most 20, then `...and N more.`): `unknown command` (the reply includes the
   `HELP` list), `inquiry item` for `LIST`, `UPDATE_CAT` and web addresses
   (the reply says they go to `INQUIRY` with subject `REQUEST`), or the
   command rule the line breaks. Valid lines in the same message run.
 - **Empty body** (nothing above the quote but blank lines and comments):
   the `HELP` reply.
-- **Menu code in the subject:** the message is a menu reply and its body
-  holds option numbers, not commands (see [Reading a reply](#reading-a-reply)).
-  A command typed into such a reply is not run; the error reply says to
-  send commands in a new message.
+- **Menu code in the subject:** a subject token such as `[K7QX]` makes the
+  message a menu reply only when it is a menu this account holds, or when
+  the body is a valid choice (see [Reading a reply](#reading-a-reply)).
+  Otherwise the body is read as commands, so a bracketed word in a subject
+  (`[TEST]`, `[INFO]`) does not stop a request.
 
 ## Compatibility requests
 
@@ -203,15 +206,27 @@ do not depend on either.
 
 **Rules:**
 
-- The message is to the service address (any domain), and its subject
+- The message is `To:` the service address (any domain), and its subject
   contains `[CODE]`, with or without leading `Re:`. Mail to `SERVICE` is
   not a menu reply; it is ignored.
 - The choice is read from the text part's lines before the first line
-  matching `^----- Message from .+ sent \d{4}/\d{2}/\d{2} \d{2}:\d{2} -----$`
-  (or the whole part when there is none). Blank lines are skipped. The
-  remaining lines must hold only numbers, ranges such as `2-4`, or
-  `MORE`, separated by spaces or commas, in ASCII. Anything else makes
-  the reply invalid, and the user gets the menu again.
+  matching `----- Message from .+ sent [0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2} -----`
+  in full (or the whole part when there is none). Blank lines are
+  skipped. The remaining lines must hold only numbers, ranges such as
+  `2-4`, or `MORE`, separated by spaces or commas, in ASCII.
+- Which message is a menu reply:
+
+  | Subject | Account holds that menu | Body is a valid choice | Handled as |
+  | --- | --- | --- | --- |
+  | One valid code | yes | yes | Menu reply |
+  | One valid code | yes | no | Menu reply error: names the reason, says to answer with numbers or `MORE`, and to send commands in a new message |
+  | One valid code | no | yes | "Menu not found" reply |
+  | One valid code | no | no | Commands (`parse_commands`) |
+  | No code, a code outside the alphabet, or several codes | | | Commands |
+
+  So `Re: [TEST] WX` with body `WX FN43` runs `WX FN43` unless the
+  account holds a menu `TEST`. A code is a handle bound to the account
+  (see [Menu codes](#menu-codes)); another account's code is "not held".
 - Only those lines are decoded and read, so the quoted text's encoding
   does not matter.
 

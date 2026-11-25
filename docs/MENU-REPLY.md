@@ -23,6 +23,7 @@ class MenuReply:
 
 class MenuReplyError(ValueError):
     reason: str               # one of the reasons below; str(error) == reason
+    code: str | None          # the subject's code, upper case, once step 4 has passed; else None
 ```
 
 - `message` is the whole MIME message as bytes. Any other type raises
@@ -38,7 +39,14 @@ class MenuReplyError(ValueError):
 - For every `bytes` input the function returns a `MenuReply` or raises
   `MenuReplyError`. No other exception may escape (no `RecursionError`,
   `UnicodeError`, `KeyError` or `email` internals).
-- `MenuReplyError(reason)` takes the reason as its only argument.
+- `MenuReplyError(reason, code=None)`: `code` is optional. The parser
+  sets it on every error raised after step 4 has found exactly one valid
+  code (`no text part`, `unsupported transfer encoding`, `non-ASCII`,
+  `empty choice`, `invalid choice`, `invalid range`, `too many choices`)
+  and leaves it `None` for the earlier reasons and for `malformed message`
+  wherever it arises. The robot needs it to
+  decide whether the message answers one of the account's menus or is a
+  request (INQUIRY-ROBOT.md, section 3).
 - Standard library `email` only; parse with `email.policy.compat32` (see below);
   the Subject's RFC 2047 encoded words are decoded explicitly.
 
@@ -94,8 +102,11 @@ The first rule that fails raises its reason.
    - one, but a character is outside `23456789ABCDEFGHJKLMNPQRSTUVWXYZ`
      (case-insensitive): `invalid code`. `0`, `O`, `1` and `I` are outside.
 
-   The code is returned upper-case. Other bracketed text (`[planet]`,
-   `[ABCDE]`, `[ K7QX ]`) is ignored. A reply builder must therefore never
+   The code is returned upper-case. A bracketed four-letter word whose
+   letters are all in the alphabet is a code too: `[TEST]` gives `TEST`.
+   Whether the account holds such a menu is the robot's check, not the
+   parser's. Other bracketed text (`[planet]`, `[ABCDE]`, `[ K7QX ]`) is
+   ignored. A reply builder must therefore never
    echo `[` or `]` from a user's arguments into a subject: an argument such
    as `[Mars]` would look like a second code and the user's answer would be
    refused.

@@ -695,7 +695,7 @@ class ServiceAddressTests(unittest.TestCase):
 
     def test_valid_addresses(self):
         for address in ("FCMS", "ABC", "ABCDEFGHIJKL", "A-1", "NODE-1", "RED-CROSS", "POLICE-99A", "MLBSHELTER",
-                        "NODEDESK", "WX-9", "AB-CDEFGHIJ"):
+                        "NODEDESK", "WX-9", "AB-CDEFGHIJ", "AB-CDEFGHIJK", "NODE-1A"):
             with self.subTest(address=address):
                 self.assertEqual(inquiry.check_service_address(address), address)
 
@@ -703,7 +703,7 @@ class ServiceAddressTests(unittest.TestCase):
         for address in ("", "fcms", "Fcms", "FC", "AB", "ABCDEFGHIJKLM", "AB-CDEFGHIJKL", "FCMS-", "-FCMS",
                         "A-B-C", "FC MS", " FCMS", "FCMS ", "FCMS\n", "FCMS@lab.example", "SMTP:FCMS", "FC_MS",
                         "FC.MS", "N0CALL", "N0CALL-10", "1FCMS", "FCM\u017f", "FCM\u0405", "\uff26\uff23\uff2d\uff33",
-                        "FCMS-\u0661", "INQUIRY", "QTH", "SERVICE", "SYSTEM", "OPTIONS", "POSTMASTER",
+                        "FCMS-\u0661", "NODE-a", "NODE-1a", "node-1", "INQUIRY", "QTH", "SERVICE", "SYSTEM", "OPTIONS", "POSTMASTER",
                         "MAILER-DAEMON"):
             with self.subTest(address=address):
                 with self.assertRaises(ValueError):
@@ -797,7 +797,8 @@ class NativeCommandTests(unittest.TestCase):
 
     def test_non_ascii_or_control_in_other_lines(self):
         for line in ("w\u0131ki Mercury", "\uff37\uff29\uff2b\uff29 x", "WIKI\u200b x", "\u017folar",
-                     "WIKI\u00a0Mercury", "wiki\x0bx", "http\u017f://example.org", "LIST\x7f", "caf\u00e9"):
+                     "WIKI\u00a0Mercury", "wiki\x0bx", "http\u017f://example.org", "LIST\x7f", "caf\u00e9",
+                     "https://example.org/caf\u00e9"):
             with self.subTest(line=line):
                 self.assertEqual(self.parse(line).items, ())
                 self.assertEqual(self.reasons(line), [(1, "invalid characters")])
@@ -833,6 +834,43 @@ class NativeCommandTests(unittest.TestCase):
                 request = self.parse("HELP\n" + sep + "\nWIKI x\n")
                 self.assertEqual(request.items, (InquiryItem("service", "HELP"), InquiryItem("service", "WIKI", "x")))
                 self.assertEqual([r.line_number for r in request.rejected], [2])
+
+    def test_only_the_first_separator_counts(self):
+        request = self.parse("HELP\n" + SEP + "\nWIKI x\n" + SEP + "\nWX y\n")
+        self.assertEqual(request, inquiry.InquiryRequest((InquiryItem("service", "HELP"),), ()))
+
+    def test_line_ending_before_the_separator_counts(self):
+        def content(size):
+            text = "HELP\n;" + "x" * (size - 6)
+            self.assertEqual(len(text.encode("utf-8")), size)
+            return text
+        for body in (content(8191) + "\n" + SEP, content(8190) + "\r\n" + SEP, content(8192)):
+            with self.subTest(size=len(body)):
+                self.assertEqual(self.parse(body).items, (InquiryItem("service", "HELP"),))
+        for body in (content(8192) + "\n" + SEP, content(8192) + "\r\n" + SEP, content(8191) + "\r\n" + SEP,
+                     content(8192) + "\r" + SEP):
+            with self.subTest(size=len(body)):
+                with self.assertRaises(InquiryError) as caught:
+                    self.parse(body)
+                self.assertEqual(str(caught.exception), "body too large")
+
+    def test_byte_order_mark_counts_toward_the_size(self):
+        # As in parse_inquiry: sizes include a leading U+FEFF (3 bytes), which is then removed.
+        exact = "\ufeffHELP\n;" + "x" * (8192 - 3 - 6)
+        self.assertEqual(len(exact.encode("utf-8")), 8192)
+        self.assertEqual(self.parse(exact).items, (InquiryItem("service", "HELP"),))
+        self.assertEqual(self.parse(exact[:-1] + "\n" + SEP).items, (InquiryItem("service", "HELP"),))
+        for body in (exact + "x", exact + "\n" + SEP):
+            with self.subTest(size=len(body)):
+                with self.assertRaises(InquiryError) as caught:
+                    self.parse(body)
+                self.assertEqual(str(caught.exception), "body too large")
+
+    def test_rejected_lines_do_not_count_toward_the_limit(self):
+        body = "\n".join([f"UNKNOWN{n}" for n in range(10)] + [f"WIKI t{n}" for n in range(32)])
+        request = self.parse(body)
+        self.assertEqual(len(request.items), 32)
+        self.assertEqual([r.reason for r in request.rejected], ["unknown command"] * 10)
 
     def test_empty_bodies_give_an_empty_request(self):
         for body in ("", "\r\n\r\n", "  \t \n", "; nothing\n", "\ufeff", "\ufeff\n", SEP, SEP + "\nWIKI x\n",

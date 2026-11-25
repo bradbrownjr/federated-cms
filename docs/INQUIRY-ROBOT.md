@@ -47,7 +47,8 @@ The B2F session thread does two cheap things:
 
 1. **Classify** with a pure function `robot_addresses(raw, *,
    service_address) -> frozenset[str]`: which of the service address,
-   `INQUIRY` and `QTH` are local parts in `To:` and `Cc:`, using
+   `INQUIRY` and `QTH` are local parts of addresses in `To:` (every `To:`
+   header; `Cc:` does not count), using
    `address_local_part` (`src/federated_cms/inquiry.py:94-101`).
    It never raises; an unreadable header gives an empty set. `SERVICE` is
    not a robot address, so mail to it is not queued and gets no reply.
@@ -216,7 +217,7 @@ For every message:
 
 1. Loop and block checks (section 9). Failing messages are `ignored`
    with a reason code and get no reply.
-2. Headers `From`, `To`, `Cc`, `Subject`, `Date`, `X-Location` from a
+2. Headers `From`, `To`, `Subject`, `Date`, `X-Location` from a
    bounded reader. `src/federated_cms/b2_message.py:30-50` already splits headers; it needs
    a public function returning them.
 3. Body decoded strictly as UTF-8, else windows-1252; the parsers reject
@@ -243,9 +244,10 @@ is a service verb, `LIST`/`UPDATE_CAT`, URL, catalog ID.
 | `service`, `HELP` included | Not run. All of the message's command lines go into one pointer reply ([INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#compatibility-requests)) | `INQUIRY - REQUEST: send commands to <service address>` |
 
 Rejected lines get **one** reply for the message: line number, cleaned
-text (`RejectedLine.text`) and reason (`RejectedLine.reason`) for each,
-then one line saying what `INQUIRY` takes and that commands go to the
-service address.
+text (`RejectedLine.text`) and reason (`RejectedLine.reason`) for each of
+the first 20, then `...and <count - 20> more.` when there are more (the
+cap of the slice 1 contract), then one line saying what `INQUIRY` takes
+and that commands go to the service address.
 Which `LIST` format Express accepts is untested
 (`docs/INQUIRY-ADAPTER.md:121-124`); slice 1 sends a readable list and the lab
 tries the `CATEGORY|ID|DESCRIPTION|SIZE|DATE` form.
@@ -267,26 +269,55 @@ is used for that message only and not stored.
 
 ### Service address (native requests and menu replies)
 
-The robot picks this mail by `address_local_part` of the recipient
+The robot picks this mail by `address_local_part` of each `To:` address
 against `node.service_address` (`service_for` returns only `INQUIRY` and
 `QTH`).
 
-1. `parse_menu_reply(raw_message, address=service_address)`
-   (`src/federated_cms/menu_reply.py`; `docs/MENU-REPLY.md`) takes the
-   whole stored MIME message as bytes, not a subject and body. It checks
-   the `To` address, finds the one `[CODE]` anywhere in the subject, reads
-   the first `text/plain` part and only the lines before the
-   quoted-original separator. It returns `MenuReply(code, numbers, more)`
-   or raises `MenuReplyError` with a `reason`. Messages over 65,536 bytes
-   are refused (`too large`), the same size as `MAX_MESSAGE`; the robot
-   passes the stored message unchanged.
-2. **`no code`: a command message.** `parse_commands(body,
-   services=<configured verbs plus HELP>)`
-   ([INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md#parse_commands)). Each item
-   runs as below ("other `service`"); rejected lines get one reply for the
-   message with the line, its reason and the `HELP` list; an empty request
-   gets the `HELP` reply; `InquiryError` (`body too large`, `invalid
-   body`) gets one error reply, subject `<service address> - message:
+1. **Read the menu fields.** `parse_menu_reply(raw_message,
+   address=service_address)` (`src/federated_cms/menu_reply.py`;
+   `docs/MENU-REPLY.md`) takes the whole stored MIME message as bytes,
+   not a subject and body. It checks the `To` address, finds the one
+   `[CODE]` anywhere in the subject, reads the first `text/plain` part
+   and only the lines before the quoted-original separator. It returns
+   `MenuReply(code, numbers, more)` or raises `MenuReplyError` with a
+   `reason` and, when the subject held one valid code, that `code`.
+   Messages over 65,536 bytes are refused (`too large`), the same size as
+   `MAX_MESSAGE`; the robot passes the stored message unchanged.
+2. **Decide menu reply or commands**, looking up `(account, code)` first
+   whenever there is a code. Another callsign's code is simply not found;
+   nothing distinguishes "someone else's" from "unknown".
+
+   | Parser result | `(account, code)` stored | Then |
+   | --- | --- | --- |
+   | `MenuReply` | yes | Steps 4 to 7 |
+   | `MenuReply` | no | One reply: no menu `<code>` for this callsign; to send commands, write a new message to the service address |
+   | `MenuReplyError` with `code` (`no text part`, `unsupported transfer encoding`, `non-ASCII`, `empty choice`, `invalid choice`, `invalid range`, `too many choices`) | yes | Step 3 |
+   | `MenuReplyError` with `code` | no | Commands (step 5) |
+   | `no code`, `invalid code`, `multiple codes` | | Commands (step 5) |
+   | `too large`, `malformed message` | | One error reply, subject `FCMS - message: <reason>` |
+   | `no service address` | | Cannot happen for mail routed here; logged as `internal_error` |
+
+   A subject word in brackets, such as `[TEST]`, is code-shaped and
+   becomes a code (`MENU-REPLY.md`, step 4), so this lookup is what keeps
+   it from blocking a request. A row kept for an expired menu (until
+   `purge_after`) counts as stored.
+3. **Menu reply error:** one reply naming the reason and saying to answer
+   with option numbers, such as `2` or `1-3`, or `MORE`, and to send
+   commands in a new message. Subject `FCMS - menu reply: <reason>`. It
+   counts as invalid (section 6).
+4. **Expired:** say so and list the options as full commands to send to
+   the service address. **A number with no stored option:** one error
+   reply naming the numbers and the menu's valid range. **Valid:** each
+   number (sorted, no repeats, at most 20 per reply) becomes an item
+   running the option's stored command as if sent to the service address
+   (`2-21` is 20 items). **`MORE`:** the next page (section 4).
+5. **Commands.** `parse_commands(body, services=<configured verbs plus
+   HELP>)` ([INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md#parse_commands)), on
+   the B2 body as for `INQUIRY`. Each item runs as below; rejected lines
+   get one reply for the message listing at most 20 (line, text and
+   reason), then `...and <count - 20> more.`, then the `HELP` list; an
+   empty request gets the `HELP` reply; `InquiryError` (`body too large`,
+   `invalid body`) gets one error reply, subject `FCMS - message:
    <reason>`.
 
    | Item | Action | Reply subject |
@@ -294,29 +325,7 @@ against `node.service_address` (`service_for` returns only `INQUIRY` and
    | `HELP` with no / one argument (`HELP WX`) | Verbs with descriptions / that handler's `help()` | `FCMS - HELP` / `FCMS - HELP WX` |
    | other `service` | Handler `step()` loop | [INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#replies) |
 
-3. **`multiple codes` or `invalid code`:** one error reply saying the
-   subject must hold one menu code, and that commands go in a new message
-   to the service address. **Any other `MenuReplyError`** (`too large`,
-   `malformed message`, `no text part`, `unsupported transfer encoding`,
-   `non-ASCII`, `empty choice`, `invalid choice`, `invalid range`, `too
-   many choices`): one error reply naming the reason and saying to answer
-   with option numbers, such as `2` or `1-3`, or `MORE`, and to send
-   commands in a new message. Subject `FCMS - menu reply: <reason>`. The
-   parser does not return the code with an error, so the menu is not sent
-   again. Both kinds count as invalid (section 6). `no service address`
-   cannot happen for mail the robot routed here; it is logged as
-   `internal_error`.
-4. Look up `(account, code)`. Another callsign's code is simply not
-   found; nothing distinguishes "someone else's" from "unknown".
-5. Unknown or expired: say so, and while the row exists (until
-   `purge_after`) list its options as full commands to send to the
-   service address.
-6. A number with no stored option: one error reply naming the numbers
-   and the menu's valid range.
-7. Valid: each number (sorted, no repeats, at most 20 per reply) becomes
-   an item running the option's stored command as if sent to the service
-   address (`2-21` is 20 items).
-8. `MORE`: the next page (section 4).
+`FCMS` in these subjects is the configured service address.
 
 ## 4. Menu-code store
 
@@ -814,7 +823,12 @@ against the loopback B2F server.
    `max_wait`, scheduled fetches, janitor; time driven by the fake clock.
 4. **Menus and menu replies.** Codes, expiry, `MORE`, numbers run as
    commands, expired-menu replies; tested with a test-only handler that
-   returns a fixed menu.
+   returns a fixed menu. The table in section 3 ("Decide menu reply or
+   commands") is tested row by row, including: `Re: [TEST] x` with body
+   `HELP` from an account holding no menu `TEST` gets the `HELP` reply;
+   the same message from an account holding menu `TEST` gets the menu
+   reply error; `Re: [TEST]` with body `2` and no menu `TEST` gets the
+   "no menu" reply; another account's code with body `HELP` runs `HELP`.
 5. **`WX`, `ALERTS`, `SOLAR`.** Handlers that call the `wx_format`
    functions; NWS and SWPC fixtures are in `tests/fixtures/`; place from
    QTH or `X-Location`.
@@ -865,7 +879,7 @@ gives an empty request, not an error.
 ```python
 parse_menu_reply(message: bytes, *, address: str = "FCMS") -> MenuReply
 MenuReply(code: str, numbers: tuple[int, ...], more: bool)
-MenuReplyError(ValueError)   # .reason, one of the listed reasons
+MenuReplyError(ValueError)   # .reason, one of the listed reasons; .code, the subject's code or None
 ```
 
 `message` is the whole MIME message; anything else raises `TypeError`.

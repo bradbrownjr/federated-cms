@@ -137,7 +137,7 @@ Used fields:
 | Field | Use | When absent |
 | --- | --- | --- |
 | `points.properties.cwa`, else `gridId` (when `cwa` is absent or `null`) | Office, must match `[A-Z]{3,4}` entirely | error |
-| `points.properties.forecastZone` | Zone ID, the last path segment (the whole value when it has no `/`). Any value that is not a string ending in a match of `[A-Z]{2}Z\d{3}` is ignored, with no error | no zone line |
+| `points.properties.forecastZone` | Zone ID, the last path segment (the whole value when it has no `/`). Any value that is not a string ending in a match of `[A-Z]{2}Z[0-9]{3}` is ignored, with no error | no zone line |
 | `points.properties.relativeLocation.properties.city`, `state` | After `near`; a value that is present and not a string raises | left out |
 | `forecast.properties.updateTime`, else `generatedAt` (when `updateTime` is absent or `null`) | Issue time | `upd n/a` |
 | `forecast.properties.periods` | A list of objects, kept in the order given | error |

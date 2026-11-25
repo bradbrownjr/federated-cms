@@ -294,10 +294,12 @@ The robot's loop rules use the same set ([INQUIRY-ROBOT.md](INQUIRY-ROBOT.md#mai
 
 ### `parse_commands`
 
-Reads the body of a message to the service address. The subject is not an
-argument: it is not read for commands. The robot first calls
-`menu_reply.parse_menu_reply`; only a `no code` result makes the message a
-command message ([INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#native-requests)).
+Reads the body of a message `To:` the service address. The subject is not
+an argument: it is not read for commands. The robot first calls
+`menu_reply.parse_menu_reply` and looks up any code; the message is read
+as commands when it is not a menu reply by the rules in
+[INQUIRY-ROBOT.md](INQUIRY-ROBOT.md#service-address-native-requests-and-menu-replies)
+(section 3, "Decide menu reply or commands").
 
 **Arguments**, checked in this order before the body is read:
 
@@ -310,6 +312,9 @@ command message ([INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#native-reques
 
 **Body**, each failure an `InquiryError`:
 
+Sizes are measured on the body as given, a leading U+FEFF included, as
+in `parse_inquiry`; the U+FEFF is removed after the whole-body checks.
+
 1. More than 65,536 characters, or more than 65,536 bytes as UTF-8:
    `body too large`. The character count is compared first.
 2. A lone surrogate anywhere: `invalid body`.
@@ -321,9 +326,11 @@ command message ([INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#native-reques
    (observed, [INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#reading-a-reply));
    `menu_reply` uses the same pattern. Any sender name matches. A trailing
    space, a leading space, text before it or non-ASCII digits make it an
-   ordinary line.
-5. The text before that line (the whole body when there is none) may be at
-   most 8,192 bytes as UTF-8: `body too large`. So a Reply that quotes a
+   ordinary line. Only the first separator counts: everything after it,
+   later separators and lines between them included, is not read.
+5. The text before that line, with the line ending just before it and a
+   leading U+FEFF counted (the whole body when there is no separator), may
+   be at most 8,192 bytes as UTF-8: `body too large`. So a Reply that quotes a
    12,000-character article still fits, while the part the user wrote has
    `parse_inquiry`'s limit.
 
