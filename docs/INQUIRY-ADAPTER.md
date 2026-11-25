@@ -3,7 +3,8 @@
 `federated_cms.inquiry` recognizes the service addresses Winlink clients
 already use and parses their message bodies. It does no I/O and makes no
 authorization decision; a mailbox adapter calls it after a B2 message is
-accepted. Tests: `tests/test_inquiry.py`.
+accepted. Tests: `tests/test_inquiry.py`. Menu replies from clients are read by
+`federated_cms.menu_reply`, see [MENU-REPLY.md](MENU-REPLY.md).
 
 ## Addresses
 
@@ -128,6 +129,104 @@ BOM and CRLF line endings. Descriptions include non-ASCII text such as
 So a catalog entry is an ID mapped to a source. Our server answers from
 `SERVICE`, one reply per item, with the extracted text as the body. Replies
 use plain ASCII where possible so the charset mismatch cannot occur.
+
+## Service commands (`INQUIRY`)
+
+A body line may be a service command such as `WIKI Mercury | 2`, handled by
+a node service instead of the catalog. Design: `INTERACTIVE-SERVICES.md`
+(branch `docs/interactive-services`, "Requests"). This section is the parser
+contract only; the parser does not know what any verb does. Tests:
+`tests/test_inquiry.py`, class `ServiceCommandTests`.
+
+### Signature
+
+```python
+def parse_inquiry(subject: str, body: str, *, services: frozenset[str] = frozenset()) -> InquiryRequest
+```
+
+`services` is keyword-only. The default (empty) behaves exactly as before:
+with no services configured, no line is a service command.
+
+- `services` must be a `frozenset` or `set`; any other type (including a
+  bare `str`, which would iterate into single letters) raises `TypeError`.
+- Each verb must match `[A-Z][A-Z0-9_-]{0,31}` (ASCII upper case only), and
+  `LIST` and `UPDATE_CAT` are not allowed. A bad verb raises `ValueError`
+  that is not an `InquiryError`. `services` is checked first, before the
+  subject and body, so a bad configuration never looks like a bad request.
+
+### Result
+
+`InquiryItem` gains two fields after the existing two, both with defaults, so
+`InquiryItem("catalog", "X")` still constructs and compares as before:
+
+```python
+@dataclass(frozen=True)
+class InquiryItem:
+    kind: str
+    value: str
+    arguments: str = ""
+    choice: str | None = None
+```
+
+For a service command: `kind` is `"service"`, `value` is the verb upper-cased
+(ASCII), `arguments` is the collapsed argument text (`""` when none) with its
+case kept, and `choice` is the collapsed choice (case kept) or `None` when the
+line has no `|`. Every other kind keeps `arguments == ""` and `choice is None`.
+
+### Line form
+
+`VERB [arguments] [| choice]`, read after comments are removed.
+
+- **Comments:** unchanged. `;` starts a comment on a line that does not start
+  with `http://` or `https://`, so a service line cannot carry a `;` in its
+  arguments or choice. That costs titles containing `;`, which are rare and
+  can be requested through a menu choice. The rule is kept so every line
+  type has one comment rule; a node needing `;` in arguments would need a
+  separate decision.
+- **Verb:** the text from the start of the stripped line up to the first
+  space, tab or `|`, upper-cased with ASCII rules, must equal an entry of
+  `services` exactly. `WIKI|2`, `wiki`, `WIKI\tMercury` are `WIKI`; `WIKIS`
+  and `WIKI.X` are not (they stay catalog IDs as before) and neither is
+  `w\u0131ki` (an `invalid item`). A service verb wins over a catalog ID of the same
+  name, so `WIKI` alone is a service command, not catalog ID `WIKI`.
+- **Arguments:** the text between the verb and the first `|` (or the end of
+  the line). Spaces and tabs are collapsed to one space and the ends trimmed.
+  It may be empty. After collapsing it holds ASCII printable characters only
+  (`0x20`-`0x7E`) and at most 200 of them.
+- **Choice:** the text after the first `|`, collapsed the same way. It must
+  not be empty, must not contain another `|`, holds ASCII printable
+  characters only and is at most 80 characters.
+- The whole line may be 8192 bytes at most like any body; the limits above
+  are checked after collapsing, so spaces do not count twice.
+
+### Rejected lines
+
+A service line that breaks a rule goes to `rejected` like any bad line,
+parsing continues, `RejectedLine.text` is the line cut to 80 characters with
+control characters replaced by `?`. Reasons, checked in this order, first
+match wins:
+
+| Reason | When |
+| --- | --- |
+| `invalid characters` | any non-ASCII character or control character (C0 other than tab, DEL) in the line after comment removal |
+| `arguments too long` | more than 200 characters after collapsing |
+| `multiple choices` | a second `|` after the first |
+| `empty choice` | `|` present, choice empty after collapsing |
+| `choice too long` | more than 80 characters after collapsing |
+
+Lines that are not service commands keep reason `invalid item`, including a
+line whose first word only looks like a verb (`WIKIS x`, `w\u0131ki x`).
+
+### Duplicates and the item limit
+
+- Two commands are duplicates when verb, arguments and choice are all equal
+  after collapsing. Case matters in arguments and choice (`WIKI Mercury` and
+  `WIKI mercury` are two commands; the service decides how to match). A
+  duplicate is dropped silently, even beyond the limit.
+- Service commands count toward the 32-item limit with every other kind. The
+  33rd distinct accepted item is rejected with `too many items`.
+- A body of only service lines is not empty. An empty request, a bad subject
+  and an oversized body raise `InquiryError` as before.
 
 ## Position report (`QTH`)
 

@@ -10,6 +10,7 @@ import unittest
 
 from federated_cms.inquiry import (
     InquiryError,
+    InquiryItem,
     PositionReportError,
     address_local_part,
     parse_inquiry,
@@ -440,6 +441,225 @@ class PositionReportHardeningTests(unittest.TestCase):
                 for value in self.coords(lat, lon):
                     self.assertEqual(value, 0.0)
                     self.assertEqual(math.copysign(1.0, value), 1.0)
+
+
+class ServiceCommandTests(unittest.TestCase):
+    """Service commands in INQUIRY bodies; see docs/INQUIRY-ADAPTER.md."""
+
+    SERVICES = frozenset({"WIKI", "NEWS", "WX", "SOLAR"})
+
+    def parse(self, body, services=None):
+        return parse_inquiry("REQUEST", body, services=self.SERVICES if services is None else services)
+
+    def one(self, line):
+        request = self.parse(line)
+        self.assertEqual(request.rejected, (), line)
+        self.assertEqual(len(request.items), 1, line)
+        return request.items[0]
+
+    def reasons(self, body):
+        return [(r.line_number, r.reason) for r in self.parse(body).rejected]
+
+    def test_default_services_empty_changes_nothing(self):
+        for kwargs in ({}, {"services": frozenset()}):
+            with self.subTest(kwargs=kwargs):
+                request = parse_inquiry("REQUEST", "WIKI Mercury\nWIKI\n", **kwargs)
+                self.assertEqual(request.items, (InquiryItem("catalog", "WIKI"),))
+                self.assertEqual([r.line_number for r in request.rejected], [1])
+                self.assertEqual(request.rejected[0].reason, "invalid item")
+
+    def test_services_is_keyword_only(self):
+        with self.assertRaises(TypeError):
+            parse_inquiry("REQUEST", "WIKI", frozenset({"WIKI"}))
+
+    def test_forms(self):
+        cases = [
+            ("WIKI", "", None),
+            ("wiki mercury", "mercury", None),
+            ("WiKi Mercury (planet)", "Mercury (planet)", None),
+            ("WIKI Mercury | 3", "Mercury", "3"),
+            ("NEWS BBC|3", "BBC", "3"),
+            ("NEWS BBC |  3   FULL ", "BBC", "3 FULL"),
+            ("WIKI  Mercury \t (planet)", "Mercury (planet)", None),
+            ("  WX\tWaterboro   ME  ", "Waterboro ME", None),
+            ("WIKI | 2", "", "2"),
+            ("WIKI|2", "", "2"),
+            ("WIKI Mercury ; a comment", "Mercury", None),
+            ("WIKI Mercury | 3 ; a comment", "Mercury", "3"),
+            ("WIKI ; only a comment", "", None),
+            ("WIKI a;b", "a", None),
+            ("WIKI Mercury\t|\tFULL", "Mercury", "FULL"),
+            ("WIKI " + "".join(chr(c) for c in range(0x21, 0x7F) if chr(c) not in ";|"),
+             "".join(chr(c) for c in range(0x21, 0x7F) if chr(c) not in ";|"), None),
+        ]
+        for line, arguments, choice in cases:
+            with self.subTest(line=line):
+                item = self.one(line)
+                self.assertEqual(item.kind, "service")
+                self.assertEqual(item.value, line.strip().replace("|", " ").split()[0].upper())
+                self.assertEqual(item.arguments, arguments)
+                self.assertEqual(item.choice, choice)
+
+    def test_item_shape_and_equality(self):
+        item = self.one("wiki Mercury | 3")
+        self.assertEqual(item, InquiryItem("service", "WIKI", "Mercury", "3"))
+        self.assertEqual(item, InquiryItem(kind="service", value="WIKI", arguments="Mercury", choice="3"))
+        self.assertEqual(hash(item), hash(InquiryItem("service", "WIKI", "Mercury", "3")))
+        with self.assertRaises(Exception):
+            item.arguments = "x"
+
+    def test_existing_kinds_keep_default_new_fields(self):
+        request = self.parse("PROP_WWV\nLIST\nUPDATE_CAT\nhttps://example.org/a|b\n")
+        self.assertEqual(request.items, (
+            InquiryItem("catalog", "PROP_WWV"), InquiryItem("list", "LIST"),
+            InquiryItem("update_catalog", "UPDATE_CAT"), InquiryItem("url", "https://example.org/a|b"),
+        ))
+        for item in request.items:
+            self.assertEqual(item.arguments, "")
+            self.assertIsNone(item.choice)
+
+    def test_order_is_preserved_across_kinds(self):
+        request = self.parse("PROP_WWV\nWIKI a\nLIST\nNEWS BBC | 2\n")
+        self.assertEqual([i.kind for i in request.items], ["catalog", "service", "list", "service"])
+
+    def test_service_verb_wins_over_catalog_id(self):
+        self.assertEqual(self.one("SOLAR").kind, "service")
+        self.assertEqual(self.one("solar").value, "SOLAR")
+
+    def test_verb_is_the_whole_first_word(self):
+        # Not service verbs: still judged as before.
+        request = self.parse("WIKIS\nWIKI.X\nWIKI-X\nWIKI_X\nWIKIPEDIA Mercury\n")
+        self.assertEqual([(i.kind, i.value) for i in request.items], [
+            ("catalog", "WIKIS"), ("catalog", "WIKI.X"), ("catalog", "WIKI-X"), ("catalog", "WIKI_X")])
+        self.assertEqual([(r.line_number, r.reason) for r in request.rejected], [(5, "invalid item")])
+
+    def test_non_ascii_lookalike_verbs_are_not_services(self):
+        for line in ("w\u0131ki Mercury", "\uff37\uff29\uff2b\uff29 x", "WIKI\u200b x", "\u017folar",
+                     "WIKI\u00a0Mercury", "SOLAR\u2003x", "wiki\x0bx"):
+            with self.subTest(line=line):
+                request = self.parse(line)
+                self.assertEqual(request.items, ())
+                self.assertEqual([r.reason for r in request.rejected], ["invalid item"])
+
+    def test_non_service_lines_with_pipe_keep_old_behaviour(self):
+        request = self.parse("LIST WIKI\nPROP_WWV | 2\nUNKNOWN a\n")
+        self.assertEqual(request.items, ())
+        self.assertEqual([r.reason for r in request.rejected], ["invalid item"] * 3)
+
+    def test_argument_length_limit(self):
+        self.assertEqual(len(self.one("WIKI " + "a" * 200).arguments), 200)
+        self.assertEqual(self.reasons("WIKI " + "a" * 201), [(1, "arguments too long")])
+        # Length is measured after collapsing.
+        spaced = ("a" + " " * 5) * 50
+        self.assertGreater(len(spaced), 200)
+        self.assertEqual(self.one("WIKI " + spaced).arguments, " ".join("a" * 50))
+        self.assertEqual(self.reasons("WIKI " + "a" * 8000), [(1, "arguments too long")])
+
+    def test_choice_length_limit(self):
+        self.assertEqual(len(self.one("WIKI x | " + "c" * 80).choice), 80)
+        self.assertEqual(self.reasons("WIKI x | " + "c" * 81), [(1, "choice too long")])
+        spaced = ("c" + " " * 4) * 30
+        self.assertGreater(len(spaced), 80)
+        self.assertEqual(self.one("WIKI x | " + spaced).choice, " ".join("c" * 30))
+
+    def test_choice_rules(self):
+        self.assertEqual(self.reasons("WIKI Mercury |"), [(1, "empty choice")])
+        self.assertEqual(self.reasons("WIKI Mercury |   \t"), [(1, "empty choice")])
+        self.assertEqual(self.reasons("WIKI Mercury | ; comment"), [(1, "empty choice")])
+        self.assertEqual(self.reasons("WIKI |"), [(1, "empty choice")])
+        for line in ("WIKI a | b | c", "WIKI a ||", "WIKI a | | b", "WIKI a | b |", "NEWS | | "):
+            with self.subTest(line=line):
+                self.assertEqual(self.reasons(line), [(1, "multiple choices")])
+        for rejected_item in self.parse("WIKI a | b | c").rejected:
+            self.assertEqual(rejected_item.text, "WIKI a | b | c")
+
+    def test_invalid_characters(self):
+        for line in ("WIKI caf\u00e9", "WIKI a | caf\u00e9", "WIKI a\x00b", "WIKI a\x7fb", "WIKI a\x1bb",
+                     "WIKI a\x0bb", "WIKI \u00a0x", "WIKI a\u2003b", "WIKI a | \u200b1", "WIKI \U0001f600",
+                     "WIKI a\x0cb"):
+            with self.subTest(line=line):
+                self.assertEqual(self.reasons(line), [(1, "invalid characters")])
+
+    def test_non_ascii_in_comment_is_ignored(self):
+        self.assertEqual(self.one("WIKI Mercury ; caf\u00e9 \x00").arguments, "Mercury")
+
+    def test_reason_precedence(self):
+        self.assertEqual(self.reasons("WIKI " + "a" * 201 + " | b | c"), [(1, "arguments too long")])
+        self.assertEqual(self.reasons("WIKI a\u00e9" + "a" * 300), [(1, "invalid characters")])
+        self.assertEqual(self.reasons("WIKI a | b | " + "c" * 100), [(1, "multiple choices")])
+        self.assertEqual(self.reasons("WIKI " + "a" * 201 + " |"), [(1, "arguments too long")])
+
+    def test_rejected_text_is_cut_and_has_no_control_characters(self):
+        request = self.parse("\n\nWIKI a\x00b\x1bc " + "x" * 300 + "\nWIKI \u00e9 " + "y" * 300)
+        self.assertEqual([r.line_number for r in request.rejected], [3, 4])
+        for rejected_line in request.rejected:
+            self.assertLessEqual(len(rejected_line.text), 80)
+            self.assertFalse(any(ord(c) < 32 or ord(c) == 127 for c in rejected_line.text))
+        self.assertTrue(request.rejected[0].text.startswith("WIKI a?b?c "))
+
+    def test_rejected_service_line_does_not_stop_parsing_or_count_toward_limit(self):
+        request = self.parse("WIKI ok\nWIKI bad \u00e9\nWIKI ok2 | 1\n" + "\n".join(f"C{n}" for n in range(30)))
+        self.assertEqual(len(request.items), 32)
+        self.assertEqual([r.reason for r in request.rejected], ["invalid characters"])
+
+    def test_duplicates_kept_once(self):
+        request = self.parse("WIKI Mercury\nwiki  Mercury ; again\nWIKI Mercury | 3\nWIKI Mercury |3\nWIKI mercury\nWIKI\nwiki \n")
+        self.assertEqual([(i.arguments, i.choice) for i in request.items],
+                         [("Mercury", None), ("Mercury", "3"), ("mercury", None), ("", None)])
+        self.assertEqual(request.rejected, ())
+
+    def test_service_commands_count_toward_the_item_limit(self):
+        body = "\n".join(f"C{n}" for n in range(31)) + "\nWIKI a\nWIKI a\nWIKI b\nC0\nSOLAR\n"
+        request = self.parse(body)
+        self.assertEqual(len(request.items), 32)
+        self.assertEqual(request.items[-1], InquiryItem("service", "WIKI", "a"))
+        self.assertEqual([(r.line_number, r.reason, r.text) for r in request.rejected],
+                         [(34, "too many items", "WIKI b"), (36, "too many items", "SOLAR")])
+
+    def test_only_service_commands_up_to_the_limit(self):
+        body = "\n".join(f"WIKI topic {n}" for n in range(40))
+        request = self.parse(body)
+        self.assertEqual(len(request.items), 32)
+        self.assertEqual(request.items[-1].arguments, "topic 31")
+        self.assertEqual([r.line_number for r in request.rejected], list(range(33, 41)))
+        self.assertTrue(all(r.reason == "too many items" for r in request.rejected))
+
+    def test_request_errors_still_apply(self):
+        with self.assertRaises(InquiryError):
+            parse_inquiry("Weather", "WIKI a", services=self.SERVICES)
+        with self.assertRaises(InquiryError):
+            parse_inquiry("REQUEST", "; WIKI a\n", services=self.SERVICES)
+        with self.assertRaises(InquiryError):
+            parse_inquiry("REQUEST", "WIKI " + "a" * 8200, services=self.SERVICES)
+        with self.assertRaises(InquiryError):
+            parse_inquiry("REQUEST", "WIKI a\ud800", services=self.SERVICES)
+        self.assertEqual(len(parse_inquiry("//WL2K REQUEST", "WIKI a", services=self.SERVICES).items), 1)
+
+    def test_bom_and_line_endings(self):
+        request = self.parse("\ufeffWIKI a\r\nNEWS b | 2\rWX c\n")
+        self.assertEqual([i.value for i in request.items], ["WIKI", "NEWS", "WX"])
+
+    def test_invalid_services_raise_value_error_not_inquiry_error(self):
+        bad = [{"LIST"}, {"UPDATE_CAT"}, {"WIKI", "LIST"}, {"wiki"}, {"Wiki"}, {""}, {"A B"}, {"WIKI|X"},
+               {"WIKI\t"}, {"1ABC"}, {"-AB"}, {"A" * 33}, {"\u0131NQ"}, {"WIKI;"}, {"W.K"}, {"WIKI\n"}]
+        for services in bad:
+            for subject, body in (("REQUEST", "PROP_WWV"), ("not a request", ""), ("REQUEST", "")):
+                with self.subTest(services=services, subject=subject):
+                    with self.assertRaises(ValueError) as caught:
+                        parse_inquiry(subject, body, services=frozenset(services))
+                    self.assertNotIsInstance(caught.exception, InquiryError)
+
+    def test_valid_service_verbs(self):
+        services = frozenset({"A", "A" * 32, "X1", "SOLAR_X", "MY-SVC", "NEWS"})
+        request = self.parse("A\nx1 y\nmy-svc | 1\n" + "a" * 32 + "\n", services=services)
+        self.assertEqual([i.value for i in request.items], ["A", "X1", "MY-SVC", "A" * 32])
+        self.assertEqual(self.parse("WIKI", services={"WIKI"}).items[0].kind, "service")  # a plain set works too
+
+    def test_services_of_wrong_type_raise_type_error(self):
+        for services in ("WIKI", ["WIKI"], ("WIKI",), None, {"WIKI": 1}.keys()):
+            with self.subTest(services=services):
+                with self.assertRaises(TypeError):
+                    parse_inquiry("REQUEST", "WIKI", services=services)
 
 
 if __name__ == "__main__":
