@@ -8,34 +8,32 @@ local data or the cache, fetches from the Internet when it has to, and
 queues replies from `SERVICE` in the sender's mailbox for their next
 connection. It ties together pieces specified elsewhere:
 
-| Piece | Spec | Branch at time of writing |
-| --- | --- | --- |
-| Address match, `INQUIRY` and `QTH` parsing | `docs/INQUIRY-ADAPTER.md`, `src/federated_cms/inquiry.py` | `feat/inquiry-parser` (4e8c47d) |
-| Services, menus, menu codes, reply rules | `docs/INTERACTIVE-SERVICES.md` | `docs/interactive-services` (3624da0) |
-| Text extraction and `render` | `docs/TEXT-EXTRACTOR.md` | `feat/text-extractor` (933a74f) |
-| RSS/Atom parsing | `docs/FEED-READER.md` | `feat/feed-reader` (55727ed) |
-| Safe fetcher | `docs/FETCHER.md` | not pushed; being written |
-| Service commands in `parse_inquiry` | `docs/INQUIRY-ADAPTER.md` ("Service commands"), `src/federated_cms/inquiry.py` | `feat/service-commands` (ca60d99) |
-| Menu-reply parsing | `docs/MENU-REPLY.md`, `src/federated_cms/menu_reply.py` | `feat/service-commands` (ca60d99) |
-| `WX`/`ALERTS`/`SOLAR` formatters | `docs/WX-FORMATTERS.md`, `src/federated_cms/wx_format.py` | `feat/wx-formatters` (a029c94) |
+| Piece | Spec and code |
+| --- | --- |
+| Address match, `INQUIRY` and `QTH` parsing, service commands | `docs/INQUIRY-ADAPTER.md`, `src/federated_cms/inquiry.py` |
+| Menu-reply parsing | `docs/MENU-REPLY.md`, `src/federated_cms/menu_reply.py` |
+| Services, menus, menu codes, reply rules | `docs/INTERACTIVE-SERVICES.md` |
+| Text extraction and `render` | `docs/TEXT-EXTRACTOR.md`, `src/federated_cms/plaintext.py` |
+| RSS/Atom parsing | `docs/FEED-READER.md`, `src/federated_cms/feeds.py` |
+| Safe fetcher | `docs/FETCHER.md`, `src/federated_cms/fetch.py` |
+| `WX`/`ALERTS`/`SOLAR` formatters | `docs/WX-FORMATTERS.md`, `src/federated_cms/wx_format.py` |
 
 The robot's own parts are listed under [Interfaces](#interfaces).
 
-Line references are to `main` at 5d502c1 unless a branch is named.
-FETCHER.md is cited by section because it is still being edited. Marks:
+Line references are to `main` at 7f6d3b4. Marks:
 **ASSUMPTION** (chosen here, not checked), **UNVERIFIED** (a fact not yet
 confirmed), **OPEN** (a decision for the project lead).
 
 ## 1. Where the robot hooks in
 
 **Today:** accepted bytes are checked (`src/federated_cms/b2f.py:73-99`)
-and stored by `LabMailboxService.store_message(..., "in")` (`b2f.py:146`)
+and stored by `LabMailboxService.store_message(..., "in")` (`src/federated_cms/b2f.py:146`)
 once per `(account, mid, direction)` (`src/federated_cms/lab_mailbox.py:112-133`),
-under the account bound at login (`b2f.py:177-181`), not a header.
+under the account bound at login (`src/federated_cms/b2f.py:177-181`), not a header.
 Outbound mail is `out` rows offered five at a time
-(`lab_mailbox.py:148-170`) and marked delivered after the client's next
-valid turn (`b2f.py:186-192`). The lab mailbox is single-account
-(`lab_mailbox.py:1-10`); the robot uses only deposit and pending, which
+(`src/federated_cms/lab_mailbox.py:148-170`) and marked delivered after the client's next
+valid turn (`src/federated_cms/b2f.py:186-192`). The lab mailbox is single-account
+(`src/federated_cms/lab_mailbox.py:1-10`); the robot uses only deposit and pending, which
 match the proposed `MailboxService`
 (`docs/MAILBOX-AUTHORIZATION-DESIGN.md:67-84`), so it moves to the
 production mailbox unchanged.
@@ -46,25 +44,25 @@ The B2F session thread does two cheap things:
 
 1. **Classify** with a pure function `robot_addresses(raw) ->
    frozenset[str]`: the robot local parts found in `To:` and `Cc:`, using
-   `address_local_part` (`inquiry.py:92-99` on `feat/inquiry-parser`).
+   `address_local_part` (`src/federated_cms/inquiry.py:94-101`).
    It never raises; an unreadable header gives an empty set.
 2. **Enqueue** one `robot_inbox` row (`INSERT OR IGNORE`, key
    `(account, mid)`) in the same transaction that stores the inbound
    bytes, when the set is not empty.
 
 Everything else runs in the robot worker. A session has a 30 s socket
-timeout (`b2f.py:240`) and the radio link is the scarce resource, so it
+timeout (`src/federated_cms/b2f.py:240`) and the radio link is the scarce resource, so it
 never waits on DNS, a slow server or a large parse. One transaction for
 the bytes and the queue row means "accepted" and "queued for the robot"
 cannot disagree after a crash; this needs `store_message`
-(`lab_mailbox.py:119-131`) to take both writes. The worker can be a
+(`src/federated_cms/lab_mailbox.py:119-131`) to take both writes. The worker can be a
 thread or a separate process on the same database; leases make both safe.
 
 **Same-session replies (on by default).** Production Winlink answered on the next
-connection, about a minute later (`docs/INQUIRY-ADAPTER.md:69-71`). For
+connection, about a minute later (`docs/INQUIRY-ADAPTER.md:72-73`). For
 items answerable without the Internet (`HELP`, `LIST`, static items,
 cache hits), the session could wait up to `same_session_wait` (proposed
-2 s) between `receive_turn` and `pending` (`b2f.py:186-195`) for the
+2 s) between `receive_turn` and `pending` (`src/federated_cms/b2f.py:186-195`) for the
 worker, then offer the replies at once, saving a radio round trip.
 Nothing in the session ever waits on a fetch.
 
@@ -72,8 +70,8 @@ Nothing in the session ever waits on a fetch.
 
 | Case | Guard |
 | --- | --- |
-| Client re-proposes a stored MID | Server answers `-` (`b2f.py:133-134`); no bytes, no row |
-| Same bytes accepted twice (race between sessions) | `store_message` returns `False` (`lab_mailbox.py:127-131`); inbox insert is `OR IGNORE` |
+| Client re-proposes a stored MID | Server answers `-` (`src/federated_cms/b2f.py:133-134`); no bytes, no row |
+| Same bytes accepted twice (race between sessions) | `store_message` returns `False` (`src/federated_cms/lab_mailbox.py:127-131`); inbox insert is `OR IGNORE` |
 | Worker crashes mid-message | Lease expires and the row is claimed again; items insert `OR IGNORE` on `UNIQUE(account, mid, seq)` |
 | Worker crashes after building replies | Replies, menus, usage rows and the item's `done` state commit in **one** transaction, conditional on the lease token (the pattern of `SQLiteStore.finish`, `src/federated_cms/store.py:186-200`) |
 
@@ -153,7 +151,7 @@ NODE_INFO     LOCAL     text:files/node-info.txt                                
 `url:` is fetched and extracted; `cmd:` runs a service command as if the
 user typed it; `text:` is a local ASCII file read at start. The mapping
 is the node's own: Winlink's catalog file holds no URLs
-(`INQUIRY-ADAPTER.md:115-116`) and is not copied
+(`docs/INQUIRY-ADAPTER.md:116-117`) and is not copied
 (`docs/INDEPENDENT-IMPLEMENTATION.md:56-58`).
 
 ### Validation at start
@@ -165,7 +163,7 @@ The robot prints every problem found and refuses to start when:
   name to class (config cannot name a module, path or function);
 - a `verb` does not match `[A-Z]{2,10}`, repeats, or is reserved (`LIST`,
   `UPDATE_CAT`, `HELP`, `MORE`);
-- a catalog ID fails the parser's pattern (`inquiry.py:46`), repeats, or
+- a catalog ID fails the parser's pattern (`src/federated_cms/inquiry.py:48`), repeats, or
   equals a verb or reserved word (`docs/INTERACTIVE-SERVICES.md:25-26`
   on `docs/interactive-services`);
 - a `cmd:` target does not parse or names no enabled verb; a `url:` target
@@ -173,8 +171,8 @@ The robot prints every problem found and refuses to start when:
   config directory, not ASCII, or over 12,000 characters;
 - a fetching handler is enabled (or `url_items` is on) and the User-Agent
   `federated-cms/<version> (<node name>; <contact>)` fails the fetcher's
-  `user_agent` check, which requires a contact (FETCHER.md, "Arguments").
-  Wikimedia and NWS both require one (`INTERACTIVE-SERVICES.md:210-215`,
+  `user_agent` check, which requires a contact (`docs/FETCHER.md`, "Arguments").
+  Wikimedia and NWS both require one (`docs/INTERACTIVE-SERVICES.md:210-215`,
   `:360-362`);
 - a handler's `validate_options` reports errors (feed URLs, languages);
 - a number is out of bounds (menu expiry 1 to 90 days, parts 1 to 50).
@@ -209,18 +207,18 @@ For every message:
 1. Loop and block checks (section 9). Failing messages are `ignored`
    with a reason code and get no reply.
 2. Headers `From`, `To`, `Cc`, `Subject`, `Date`, `X-Location` from a
-   bounded reader. `b2_message.py:30-50` already splits headers; it needs
+   bounded reader. `src/federated_cms/b2_message.py:30-50` already splits headers; it needs
    a public function returning them.
 3. Body decoded strictly as UTF-8, else windows-1252; the parsers reject
-   non-ASCII item lines anyway (`INQUIRY-ADAPTER.md:51-55`).
+   non-ASCII item lines anyway (`docs/INQUIRY-ADAPTER.md:52-56`).
 4. Request limit (section 6). Then each robot address is handled once, in
    the order `QTH`, `INQUIRY`, `SERVICE`, so a position sent with a
    request is on file before `WX` reads it.
 
 ### `INQUIRY`
 
-`parse_inquiry` (`inquiry.py:110-145`) gives items and rejected lines,
-capped at 32 items with repeats removed (`INQUIRY-ADAPTER.md:56-58`). A
+`parse_inquiry` (`src/federated_cms/inquiry.py:141-182`) gives items and rejected lines,
+capped at 32 items with repeats removed (`docs/INQUIRY-ADAPTER.md:57-59`). A
 bad subject or empty body (`InquiryError`) gets one error reply. The
 robot calls `parse_inquiry(subject, body, services=...)` with the
 configured verbs plus `HELP` (the parser reserves only `LIST` and
@@ -232,31 +230,31 @@ catalog ID.
 
 | Item | Action | Reply subject |
 | --- | --- | --- |
-| `list`, `update_catalog` | Catalog from the loaded TSV, no network | `INQUIRY: LIST` (observed, `INQUIRY-ADAPTER.md:93`) |
+| `list`, `update_catalog` | Catalog from the loaded TSV, no network | `INQUIRY: LIST` (observed, `docs/INQUIRY-ADAPTER.md:94-96`) |
 | `service` `HELP` with no / one argument (`HELP WX`) | Verbs with descriptions / that handler's `help()` | `INQUIRY - HELP` / `INQUIRY - HELP WX` |
-| `catalog` | `text:` file content; `url:` as a URL item; `cmd:` as a service item (parsed with `parse_inquiry`); unknown ID is an error | `INQUIRY - <url>` for `url:` (observed, `INQUIRY-ADAPTER.md:75-77`), else `INQUIRY - <ID>` |
+| `catalog` | `text:` file content; `url:` as a URL item; `cmd:` as a service item (parsed with `parse_inquiry`); unknown ID is an error | `INQUIRY - <url>` for `url:` (observed, `docs/INQUIRY-ADAPTER.md:76-78`), else `INQUIRY - <ID>` |
 | `url` | Error if `url_items` is off; else cache, `extract`, `render` | `INQUIRY - <url>` |
-| other `service` | Handler `step()` loop | `INTERACTIVE-SERVICES.md:39-43` |
+| other `service` | Handler `step()` loop | `docs/INTERACTIVE-SERVICES.md:39-43` |
 
 Rejected lines get **one** reply for the message: line number, cleaned
 text (`RejectedLine.text`) and reason (`RejectedLine.reason`, which names
 the broken service-line rule such as `arguments too long`) for each, then
 the `HELP` list.
 Which `LIST` format Express accepts is untested
-(`INQUIRY-ADAPTER.md:120-123`); slice 1 sends a readable list and the lab
+(`docs/INQUIRY-ADAPTER.md:121-124`); slice 1 sends a readable list and the lab
 tries the `CATEGORY|ID|DESCRIPTION|SIZE|DATE` form.
 
 ### `QTH`
 
-`parse_position_report` (`inquiry.py:165-207`). A valid report with
+`parse_position_report` (`src/federated_cms/inquiry.py:202-244`). A valid report with
 coordinates replaces the account's `robot_positions` row unless its
 `DATE` is older than the stored one (sessions can deliver out of order);
 one without coordinates is not stored. A valid report gets **no reply**
 (ASSUMPTION: as Winlink; saves airtime). An invalid one gets one error
 reply with the `PositionReportError` reason, never the body. The position
 serves only that account's `WX` and `ALERTS` with no place given
-(`INTERACTIVE-SERVICES.md:300`), is never shown to anyone else, and is
-deleted after 90 days. `X-Location` (`INTERACTIVE-SERVICES.md:133-136`)
+(`docs/INTERACTIVE-SERVICES.md:300`), is never shown to anyone else, and is
+deleted after 90 days. `X-Location` (`docs/INTERACTIVE-SERVICES.md:133-136`)
 is used for that message only and not stored.
 
 ### `SERVICE` (menu replies)
@@ -264,7 +262,7 @@ is used for that message only and not stored.
 The robot picks `SERVICE` mail by `address_local_part` of the recipient
 (`service_for` returns only `INQUIRY` and `QTH`).
 
-1. `parse_menu_reply(raw_message)` (`menu_reply.py`; `MENU-REPLY.md`) takes
+1. `parse_menu_reply(raw_message)` (`src/federated_cms/menu_reply.py`; `docs/MENU-REPLY.md`) takes
    the whole stored MIME message as bytes, not a subject and body. It
    checks the `To` address, finds the one `[CODE]` anywhere in the
    subject, reads the first `text/plain` part and only the lines before
@@ -313,7 +311,7 @@ CREATE INDEX robot_menus_purge ON robot_menus(purge_after);
 ```
 
 - **Generation:** `''.join(secrets.choice(ALPHABET) for _ in range(4))`
-  over `23456789ABCDEFGHJKLMNPQRSTUVWXYZ` (`INTERACTIVE-SERVICES.md:78-80`),
+  over `23456789ABCDEFGHJKLMNPQRSTUVWXYZ` (`docs/INTERACTIVE-SERVICES.md:78-80`),
   1,048,576 codes.
 - **Collisions:** codes are unique per account; every lookup includes the
   account. On a key conflict, draw again, up to 8 times, then fail the
@@ -373,14 +371,13 @@ class Service(Protocol):
 
 An item is stopped with `internal_error` after 8 steps. URL items and
 `url:` entries use a built-in handler: one `FetchSpec`, then
-`plaintext.extract` and `render` (`TEXT-EXTRACTOR.md:192-232` on
-`feat/text-extractor`).
+`plaintext.extract` and `render` (`docs/TEXT-EXTRACTOR.md:316-361`).
 
 ### Cache keys
 
 `"<service>|<accept>|<url>"`, with the URL normalised as the fetcher does
-(lowercase scheme and host, default port dropped, no fragment; FETCHER.md,
-"URLs"); the fetcher should export that normaliser. Handlers canonicalise
+(lowercase scheme and host, default port dropped, no fragment; `docs/FETCHER.md`,
+"URLs"); the normaliser is private in `src/federated_cms/fetch.py` (`_url`), so the robot needs it exported. Handlers canonicalise
 inputs first: coordinates rounded to 4 decimals (ASSUMPTION; UNVERIFIED
 how NWS `/points` treats finer values), zone IDs upper-cased, feed URLs
 from config. One cache serves all users: a second user asking for the
@@ -390,7 +387,7 @@ same forecast costs no fetch.
 
 | Data | `freshness` | `max_stale` | Basis |
 | --- | --- | --- | --- |
-| NWS `/points` | 24 h | 30 days | Observed `max-age=86400` (`INTERACTIVE-SERVICES.md:320-321`) |
+| NWS `/points` | 24 h | 30 days | Observed `max-age=86400` (`docs/INTERACTIVE-SERVICES.md:320-321`) |
 | NWS forecast | 1 h | 24 h | Observed `max-age=3600` (`:322-323`) |
 | NWS alerts | 5 min | 1 h | Observed `max-age=5` (`:363`); 5 min limits load |
 | SWPC products | 1 h | 24 h | "About hourly" (`:386-387`) |
@@ -399,7 +396,7 @@ same forecast costs no fetch.
 
 Config may override any value per service. Response `Cache-Control` is
 not used; the table is the rule. The fetcher takes no extra request
-headers (FETCHER.md, "`fetch`"), so there is no `ETag` revalidation; a
+headers (`docs/FETCHER.md`, "`fetch`"), so there is no `ETag` revalidation; a
 refresh is a full fetch. A `WX` or `ALERTS` reply from stale data is
 built with `format_nws_error` (see "When the Internet is down").
 
@@ -441,16 +438,16 @@ CREATE INDEX robot_item_waits_key ON robot_item_waits(cache_key);
 ### The fetch worker
 
 - Outside every B2F session. It claims a task with a lease in a short
-  `BEGIN IMMEDIATE` transaction (as `claim_next`, `store.py:166-184`),
+  `BEGIN IMMEDIATE` transaction (as `claim_next`, `src/federated_cms/store.py:166-184`),
   calls `fetch()` with no transaction open, then in one transaction
   writes the cache entry, deletes the task and sets `ready` every waiting
   item whose keys are all present.
 - Calls `federated_cms.fetch.fetch` with the node User-Agent, the spec's
   `accept` and `max_bytes`, and `deny_networks`. The `fetch` callable is
-  injected, so tests pass a fake; `network=` is never passed (FETCHER.md,
+  injected, so tests pass a fake; `network=` is never passed (`docs/FETCHER.md`,
   "Arguments").
 - One request at a time per host (Wikimedia etiquette,
-  `INTERACTIVE-SERVICES.md:210-211`), at most 4 overall (ASSUMPTION).
+  `docs/INTERACTIVE-SERVICES.md:210-211`), at most 4 overall (ASSUMPTION).
   Demand tasks go before scheduled ones.
 - A 2xx, or a status the handler treats as an answer (NWS 404), is
   cached. A 5xx, 429 or `FetchError` is retried with backoff (1, 2, 4 ...
@@ -468,7 +465,7 @@ handler formats the stale entry as usual, then calls
 `format_nws_error(service, None, ..., cached=<that reply>, cached_at=<entry
 fetched_at>, now=now)`, which gives `NWS unavailable, try later.` and
 `Older reply follows, age N min.` before the cached reply
-(`WX-FORMATTERS.md`, "Errors"). Other services state the age in their own
+(`docs/WX-FORMATTERS.md`, "Errors"). Other services state the age in their own
 wording. Otherwise the item waits and is
 retried until `max_wait_minutes` (6 h), then gets "could not reach NWS;
 try later". Fresh data is never invented (`docs/DECISIONS.md:33`,
@@ -482,7 +479,7 @@ and are to be revisited after lab measurement.
 
 | Limit (`[limits]` key) | Default | Counted from | Checked |
 | --- | --- | --- | --- |
-| Items per request (`items_per_request`) | 32 | Parser (`INQUIRY-ADAPTER.md:56-58`); a menu reply selects at most 20 numbers (`MENU-REPLY.md`) | Parse |
+| Items per request (`items_per_request`) | 32 | Parser (`docs/INQUIRY-ADAPTER.md:57-59`); a menu reply selects at most 20 numbers (`docs/MENU-REPLY.md`) | Parse |
 | Requests per hour (`requests_per_hour`) | 10 | `robot_inbox`, rolling 60 min | Parse, before any item |
 | Messages per day (`messages_per_day`) | 100 | `robot_replies` since 00:00 UTC | Before fetching, and at reply commit |
 | Bytes per day (`bytes_per_day`) | 1,000,000 | `robot_replies.body_bytes` since 00:00 UTC | Reply commit |
@@ -542,7 +539,7 @@ further bad messages that day get no reply.
 
 ## 7. Reply construction
 
-**One message per item** (`INTERACTIVE-SERVICES.md:36-37`), one for all
+**One message per item** (`docs/INTERACTIVE-SERVICES.md:36-37`), one for all
 rejected lines, at most one notice. Split articles give one message per
 part.
 
@@ -562,7 +559,7 @@ Body: 1187
 
 - `Date` uses wl2k-go's `DateLayout`, `2006/01/02 15:04`, in UTC.
 - `From: SERVICE` without a domain; the node never uses a `winlink.org`
-  address as its own (`INDEPENDENT-IMPLEMENTATION.md:61-62`).
+  address as its own (`docs/INDEPENDENT-IMPLEMENTATION.md:61-62`).
 - `To:` is the B2F account, never the inbound `From:` (section 9).
 - `Type: Private` is an ASSUMPTION. wl2k-go also defines `Service`,
   `Inquiry`, `Position Report`, `Option` and `System` (`fbb/message.go`);
@@ -571,16 +568,16 @@ Body: 1187
 
 **Subject:** `INQUIRY - <label>[: <suffix>]`, suffixes such as
 `choose [CODE]`, `not found`, `(part 2 of 6)`
-(`INTERACTIVE-SERVICES.md:39-47`). At most 80 characters: the label is
+(`docs/INTERACTIVE-SERVICES.md:39-47`). At most 80 characters: the label is
 cut with `...`, the suffix and code never. wl2k-go rejects subjects over
 128 (`Message.Validate`), so 80 leaves margin. Printable ASCII only; any
 other character in a label becomes `?`.
 
 **Body:**
 
-1. Handler text or `render` output (`TEXT-EXTRACTOR.md:212-232`).
+1. Handler text or `render` output (`docs/TEXT-EXTRACTOR.md:340-361`).
 2. For menus, the block from the robot's menu renderer
-   (`INTERACTIVE-SERVICES.md:55-74`): numbered options with their
+   (`docs/INTERACTIVE-SERVICES.md:55-74`): numbered options with their
    commands, then the code and reply instructions. `WX` and `ALERTS`
    text from `wx_format` already holds the numbered options and their
    commands, so for those the renderer adds only the code and
@@ -588,23 +585,23 @@ other character in a label becomes `?`.
 3. The source footer each service requires (NWS, Wikipedia, feeds).
 4. Checked to be printable ASCII plus `\n`; anything else is a bug that
    fails the item with `internal_error` instead of sending it.
-5. `\n` to CRLF (the mail layer's job, `TEXT-EXTRACTOR.md:231-232`);
+5. `\n` to CRLF (the mail layer's job, `docs/TEXT-EXTRACTOR.md:359-360`);
    `Body:` is the byte count after that.
 
 **Size and splitting.** A part's text is at most `max_chars` (12,000),
-far under `MAX_MESSAGE` (65,536 bytes, `b2_message.py:6`). `WIKI | FULL`
+far under `MAX_MESSAGE` (65,536 bytes, `src/federated_cms/b2_message.py:6`). `WIKI | FULL`
 and `NEWS | n FULL` split with the extractor's planned `split`
-(`INTERACTIVE-SERVICES.md:191-196`); other services truncate with the
+(`docs/INTERACTIVE-SERVICES.md:191-196`); other services truncate with the
 extractor's note. Past `parts_per_item`, the last part sent says how many
 there were and how to ask for one section. Menus offering a full article
-show its size in messages first (`INTERACTIVE-SERVICES.md:169-171`).
+show its size in messages first (`docs/INTERACTIVE-SERVICES.md:169-171`).
 
 **Queueing.** Each message passes `b2_message.message_mid`
-(`b2_message.py:14-21`), then is deposited as an `out` row for the
+(`src/federated_cms/b2_message.py:14-21`), then is deposited as an `out` row for the
 account in the transaction that marks the item done. The next session
 offers it through `pending()` like any mail. The robot needs a trusted
 `deposit(account, mid, raw)` with no user session: the proposed
-`deposit_message` (`MAILBOX-AUTHORIZATION-DESIGN.md:69-74`) under a
+`deposit_message` (`docs/MAILBOX-AUTHORIZATION-DESIGN.md:69-74`) under a
 service grant.
 
 ## 8. Failure handling and observability
@@ -700,8 +697,8 @@ its item after 30 days.
 - The robot has no network code. All Internet access is the fetch worker
   calling `federated_cms.fetch.fetch`, which checks every URL, redirect
   and DNS answer against a fixed public-address policy, connects only to
-  checked addresses, and bounds size and time (FETCHER.md, "Addresses",
-  "Connecting"; `THREAT-MODEL-M0.md:26-27`).
+  checked addresses, and bounds size and time (`docs/FETCHER.md`, "Addresses",
+  "Connecting"; `docs/THREAT-MODEL-M0.md:26-27`).
 - Service handlers build URLs from fixed bases (`https://api.weather.gov/`,
   `https://services.swpc.noaa.gov/`, the configured Wikipedia host), with
   user text only in validated, percent-encoded parameters. The robot
@@ -730,15 +727,15 @@ its item after 30 days.
 
 ### Spoofed callsigns
 
-Identity is the account bound to the B2F session (`b2f.py:177-181`).
+Identity is the account bound to the B2F session (`src/federated_cms/b2f.py:177-181`).
 Headers are not identity; addresses "are not proof of identity or
-authorization" (`b2_message.py:17-18`).
+authorization" (`src/federated_cms/b2_message.py:17-18`).
 
 The login proves that the client knew the account's shared secret when
 answering one `;PQ:` challenge. It does not prove that the person holds
 the licence or that the transmitting station is that callsign, and the
 legacy response is a short MD5-based value open to offline guessing
-(`MAILBOX-AUTHORIZATION-DESIGN.md:49-58`). Through an RMS gateway, the
+(`docs/MAILBOX-AUTHORIZATION-DESIGN.md:49-58`). Through an RMS gateway, the
 identity is whatever the gateway relays; gateway-to-CMS behaviour is not
 established (`docs/ARCHITECTURE-RFC-0001.md:10`). A BPQ terminal
 callsign is unverified (`docs/DECISIONS.md:12`) and is not an account for
@@ -751,8 +748,8 @@ address, other SSID) is counted (`from_mismatch`) and changes nothing.
 
 ### Unsafe content and storage growth
 
-Replies are printable ASCII (`TEXT-EXTRACTOR.md:71-84`, rechecked in
-section 7); feeds with `<!DOCTYPE` are refused (`FEED-READER.md:57-62`).
+Replies are printable ASCII (`docs/TEXT-EXTRACTOR.md:145`, rechecked in
+section 7); feeds with `<!DOCTYPE` are refused (`docs/FEED-READER.md:57-62`).
 Every robot table has a retention rule (section 8),
 and the inputs that create rows are capped: 32 items per message, 10
 requests per hour per account, 200 options per menu, 2 MB per cache entry
@@ -793,7 +790,7 @@ against the loopback B2F server.
 Written and tested; the robot calls these and does not reimplement them.
 The specs win over this document.
 
-**Service commands** (`federated_cms.inquiry`, `INQUIRY-ADAPTER.md`):
+**Service commands** (`src/federated_cms/inquiry.py`, `docs/INQUIRY-ADAPTER.md`):
 
 ```python
 parse_inquiry(subject: str, body: str, *, services: frozenset[str] = frozenset()) -> InquiryRequest
@@ -810,7 +807,7 @@ is read. A service line has `kind="service"`, `value` the verb,
 `InquiryError` is raised for a bad subject, empty body or empty request.
 `service_for` returns only `INQUIRY` and `QTH`.
 
-**Menu replies** (`federated_cms.menu_reply`, `MENU-REPLY.md`):
+**Menu replies** (`src/federated_cms/menu_reply.py`, `docs/MENU-REPLY.md`):
 
 ```python
 parse_menu_reply(message: bytes) -> MenuReply
@@ -822,7 +819,7 @@ MenuReplyError(ValueError)   # .reason, one of the listed reasons
 Only `MenuReplyError` escapes for bytes. `numbers` are sorted, unique,
 1 to 999, at most 20; empty when `more`.
 
-**Formatters** (`federated_cms.wx_format`, `WX-FORMATTERS.md`). They take
+**Formatters** (`src/federated_cms/wx_format.py`, `docs/WX-FORMATTERS.md`). They take
 parsed JSON (`json.loads` results) and timezone-aware times, and return
 `str`: ASCII, lines of at most `LINE_MAX` (69), attribution included.
 They raise only `WxFormatError(ValueError)`.
