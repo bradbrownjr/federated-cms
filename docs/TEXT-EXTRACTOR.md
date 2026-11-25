@@ -277,10 +277,17 @@ to `width` with `textwrap`, `break_long_words=False` and
 The text ends without trailing blank lines.
 
 **Cost:** time is linear in the input, with a small per-tag cost that
-does not grow with the number of open elements. Each of these inputs,
-all within the default `max_input_bytes`, finishes `extract` in under
-8 seconds: 256 nested `<div>` then `<p>` repeated to 2,000,000 bytes;
-660,000 `<b>` tags; 250,000 `<p>a</p>` blocks.
+does not grow with the number of open elements. The limit is relative
+to the standard library parser, so it holds on a slow or busy machine:
+on each input below, `extract` takes at most 4 times as long as one
+`html.parser.HTMLParser(convert_charrefs=True)` `feed` and `close` of the
+same input decoded as UTF-8, plus 2 seconds, both timed in the same
+process. The inputs are all within the default `max_input_bytes`: 256
+nested `<div>` then `<p>` repeated to 2,000,000 bytes; 660,000 `<b>`
+tags; 255 nested `<div>` then `<p>a</p>` repeated to 2,000,000 bytes.
+The same limit applies to `decode` of 2,000,000 bytes declared as
+`charset=punycode` (an unknown label), against a UTF-8 decode plus one
+parser pass of the same bytes.
 
 ### `extract(data, *, url, fetched_at, content_type=None, width=69, max_chars=12000, max_input_bytes=2_000_000) -> Document`
 

@@ -392,20 +392,53 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("MEZ023", out)
 
 
-def run_within(seconds, code):
-    """Run code in a child interpreter; fail if it takes longer than seconds."""
+HANG_GUARD = 120  # seconds; only catches hangs, the real limit is relative
+
+COST_CHILD = """
+import signal, sys, time
+from html.parser import HTMLParser
+from datetime import datetime, timezone
+from federated_cms.plaintext import decode, extract
+DATA = {data}
+t = time.perf_counter()
+{baseline}
+parser = HTMLParser(convert_charrefs=True)
+parser.feed(TEXT)
+parser.close()
+base = time.perf_counter() - t
+budget = 4 * base + 2
+def over(*_):
+    sys.exit(f"over budget: baseline {{base:.2f}} s, limit {{budget:.2f}} s")
+signal.signal(signal.SIGALRM, over)
+signal.setitimer(signal.ITIMER_REAL, budget)
+t = time.perf_counter()
+{work}
+took = time.perf_counter() - t
+signal.setitimer(signal.ITIMER_REAL, 0)
+print(f"baseline {{base:.2f}} s, extractor {{took:.2f}} s, ratio {{took / base:.1f}}")
+if took > budget:
+    sys.exit(f"over budget: baseline {{base:.2f}} s, extractor {{took:.2f}} s")
+"""
+
+
+def assert_cost_relative(data, baseline, work):
+    """Extractor time on data must be at most 4x the stdlib HTMLParser time plus 2 s.
+
+    Both are timed in one child process, so machine load affects them alike.
+    """
+    code = COST_CHILD.format(data=data, baseline=baseline, work=work)
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
     try:
-        subprocess.run([sys.executable, "-c", code], env=env, check=True, timeout=seconds,
-                       capture_output=True)
+        result = subprocess.run([sys.executable, "-c", code], env=env, timeout=HANG_GUARD,
+                                capture_output=True, text=True)
     except subprocess.TimeoutExpired:
-        raise AssertionError(f"took longer than {seconds} s") from None
+        raise AssertionError(f"no result within {HANG_GUARD} s") from None
+    if result.returncode:
+        raise AssertionError(result.stderr.strip().splitlines()[-1])
 
 
-EXTRACT = ("from datetime import datetime, timezone\n"
-           "from federated_cms.plaintext import extract\n"
-           "extract(DATA.encode(), url='u', fetched_at=datetime.now(timezone.utc), "
-           "content_type='text/html')\n")
+EXTRACT = ("extract(DATA, url='u', fetched_at=datetime.now(timezone.utc), "
+           "content_type='text/html')")
 
 
 class HardeningDecodeTests(unittest.TestCase):
@@ -436,8 +469,9 @@ class HardeningDecodeTests(unittest.TestCase):
         self.assertEqual(decode(page, "text/html"), (page.decode(), "utf-8"))
 
     def test_punycode_declaration_is_fast(self):
-        run_within(8, "from federated_cms.plaintext import decode\n"
-                      "decode(b'a' * 999_999 + b'-' + b'b' * 1_000_000, 'text/plain; charset=punycode')\n")
+        assert_cost_relative("b'a' * 999_999 + b'-' + b'b' * 1_000_000",
+                             "TEXT = DATA.decode('utf-8')",
+                             "decode(DATA, 'text/plain; charset=punycode')")
 
     def test_bom_with_bad_bytes_uses_replacement(self):
         self.assertEqual(decode(b"\xef\xbb\xbf\xff", None), ("�", "utf-8"))
@@ -511,7 +545,7 @@ class HardeningHtmlTests(unittest.TestCase):
 class HardeningCostTests(unittest.TestCase):
     def check(self, expression):
         self.assertLessEqual(len(eval(expression).encode()), 2_000_000)
-        run_within(8, f"DATA = {expression}\n" + EXTRACT)
+        assert_cost_relative(f"({expression}).encode()", "TEXT = DATA.decode('utf-8')", EXTRACT)
 
     def test_p_flood_at_depth_cap(self):
         self.check("'<div>' * 256 + '<p>' * ((2_000_000 - 5 * 256) // 3)")
@@ -520,7 +554,7 @@ class HardeningCostTests(unittest.TestCase):
         self.check("'<b>' * 660_000")
 
     def test_many_tiny_blocks(self):
-        self.check("'<p>a</p>' * 250_000")
+        self.check("'<div>' * 255 + '<p>a</p>' * ((2_000_000 - 5 * 255) // 8)")
 
 
 class HardeningNwsTests(unittest.TestCase):
