@@ -77,10 +77,13 @@ checks whether Express lets a user address it, bare and with a domain,
 what it puts on the wire, and whether Reply to a message From `FCMS`
 goes back to `FCMS`.
 
-**Needs:** the lab host running the B2F server over Telnet (no radio
-needed), the Express laptop, the lab database and lab password file;
-synthetic messages only. **Never against Winlink's production servers**:
-every session in this test connects to the lab server.
+**Needs:** the lab host and the Express laptop on the path already shown
+to work without a radio: Packet Winlink, virtual TCP KISS, the kissterm
+AX.25 bridge and the B2F lab server
+([WINLINK-INTEROPERABILITY.md](WINLINK-INTEROPERABILITY.md), first Express
+row); the lab database and lab password file; synthetic messages only.
+**Never against Winlink's production servers**: every session in this
+test connects to the lab server.
 
 **Before starting: credentials.** As for the RF test above: read the
 *Winlink Express account warning* in [TCP-KISS-B2F-LAB.md](TCP-KISS-B2F-LAB.md),
@@ -88,26 +91,25 @@ use an independently configured test client with disposable credentials,
 and confirm it is isolated from real account updates. If that cannot be
 confirmed, do not run this test.
 
-1. On the lab host, update the checkout to `main` and start the B2F
-   server as in step 3 above.
-2. Queue one synthetic download addressed to the lab account, with
-   `From: FCMS` and subject `FCMS - lab test [K7QX]`, using the download
-   seeding snippet under *Operator-controlled use* in
-   TCP-KISS-B2F-LAB.md with those two headers changed. Note its message
-   ID.
+1. On the lab host, update the checkout to `main` and set `PYTHONPATH` as
+   in steps 1 and 3 of the RF test above. Start the B2F server.
+2. Queue one synthetic download with the download seeding snippet under
+   *Operator-controlled use* in TCP-KISS-B2F-LAB.md, changed to
+   `sender='FCMS'`, `subject='FCMS - lab test [K7QX]'` and no attachment.
+   Note the message ID it prints.
 3. In Express, compose a new message `To: FCMS`, subject `lab 1`, body
    `HELP`. Compose a second `To: FCMS@LAB_DOMAIN` (the lab server's
    domain), subject `lab 2`, body `HELP`. Note any warning or change
    Express makes to either address while composing or saving.
-4. Connect to the lab server (Telnet Winlink session pointed at the lab
-   host) and send both. The download from step 2 arrives in the same
-   session.
-5. Open the downloaded message. Note how Express shows its sender. Press
-   Reply, type `2` above the quoted text, put it in the Outbox, and send
-   it in a second lab session.
-6. On the lab host, print the stored `in` rows' `To:` and `Subject:`
-   lines and the first line of each body for the three uploads (no other
-   content).
+4. Start the bridge against the virtual TCP KISS port and connect from
+   Express to the lab station. Both messages go up; the download from
+   step 2 comes down in the same session.
+5. Open the downloaded message and note how Express shows its sender.
+   Press Reply, type `2` above the quoted text, and send it in a second
+   lab session.
+6. On the lab host, with `service.list_incoming(session)` as described
+   after the seeding snippet, print only the `To:` and `Subject:` lines of
+   the three uploads and the separator line of the Reply.
 
 **Report:**
 - Did Express accept `FCMS` and `FCMS@LAB_DOMAIN` without complaint? Any
