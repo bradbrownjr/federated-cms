@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:cap="urn:oasis:names:tc:emergency:cap:1.2">
+    <id>https://api.weather.gov/alerts.atom?area%5B0%5D=AK&amp;active=1</id>
+    <generator>NWS CAP Server</generator>
+    <updated>2026-11-25T03:34:51+00:00</updated>
+    <author>
+        <name>w-nws.webmaster@noaa.gov</name>
+    </author>
+    <title>Current watches, warnings, and advisories for Alaska</title>
+    <link rel="self" href="https://api.weather.gov/alerts.atom?area%5B0%5D=AK&amp;active=1"/>
+    <entry>
+        <id>https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.cf54e8621c00af085bd4d63d3f1746bac75ecac9.001.1</id>
+        <link rel="alternate" href="https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.cf54e8621c00af085bd4d63d3f1746bac75ecac9.001.1.cap"/>
+        <updated>2026-11-24T14:48:00-09:00</updated>
+        <published>2026-11-24T14:48:00-09:00</published>
+        <author>
+            <name>NWS</name>
+        </author>
+        <title>Winter Weather Advisory issued November 24 at 2:48PM AKST until November 25 at 3:00AM AKST by NWS Juneau AK</title>
+        <summary>A front pushes northward across the panhandle this evening through
+tonight, bringing enough moisture into the northern panhandle and the
+Haines Highway area to bring another round of snowfall. Snow amounts
+will be highest past Milepost 24 on the Haines Highway with between 3
+to 5 inches expected in 12 hours.
+
+* WHAT...Snow expected. Total snow accumulations of 3 to 5 inches.
+
+* WHERE...Haines Highway past Milepost 24.
+
+* WHEN...Until 3 AM AKST Wednesday.
+
+* IMPACTS...Plan on slippery road conditions.
+
+* ADDITIONAL DETAILS...Lower snow amounts of up to 2 inches are
+expected for Haines and Klukwan as well as for lower elevations of
+the Haines Highway.</summary>
+        <cap:event>Winter Weather Advisory</cap:event>
+        <cap:sent>2026-11-24T14:48:00-09:00</cap:sent>
+        <cap:effective>2026-11-24T14:48:00-09:00</cap:effective>
+        <cap:onset>2026-11-24T15:00:00-09:00</cap:onset>
+        <cap:expires>2026-11-24T23:00:00-09:00</cap:expires>
+        <cap:status>Actual</cap:status>
+        <cap:msgType>Alert</cap:msgType>
+        <cap:category>Met</cap:category>
+        <cap:urgency>Expected</cap:urgency>
+        <cap:severity>Moderate</cap:severity>
+        <cap:certainty>Likely</cap:certainty>
+        <cap:areaDesc>Haines Borough and Klukwan</cap:areaDesc>
+        <cap:polygon/>
+        <cap:geocode>
+            <valueName>SAME</valueName>
+            <value>002100</value>
+        </cap:geocode>
+        <cap:geocode>
+            <valueName>UGC</valueName>
+            <value>AKZ319</value>
+        </cap:geocode>
+        <cap:parameter>
+            <valueName>AWIPSidentifier</valueName>
+            <value>WSWAJK</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>WMOidentifier</valueName>
+            <value>WWAK47 PAJK 242348</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>NWSheadline</valueName>
+            <value>WINTER WEATHER ADVISORY IN EFFECT UNTIL 3 AM AKST WEDNESDAY</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>BLOCKCHANNEL</valueName>
+            <value>EAS</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>BLOCKCHANNEL</valueName>
+            <value>NWEM</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>BLOCKCHANNEL</valueName>
+            <value>CMAS</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>VTEC</valueName>
+            <value>/O.NEW.PAJK.WW.Y.0040.261125T0000Z-261125T1200Z/</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>eventEndingTime</valueName>
+            <value>2026-11-25T03:00:00-09:00</value>
+        </cap:parameter>
+        <cap:scope>Public</cap:scope>
+        <cap:code>IPAWSv1.0</cap:code>
+        <cap:language>en-US</cap:language>
+        <cap:web>http://www.weather.gov</cap:web>
+        <cap:eventCode>
+            <valueName>SAME</valueName>
+            <value>NWS</value>
+        </cap:eventCode>
+        <cap:eventCode>
+            <valueName>NationalWeatherService</valueName>
+            <value>WWY</value>
+        </cap:eventCode>
+    </entry>
+    <entry>
+        <id>https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.74144808c7c9543ef104995c8e6d85f6c224bec8.001.1</id>
+        <link rel="alternate" href="https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.74144808c7c9543ef104995c8e6d85f6c224bec8.001.1.cap"/>
+        <updated>2026-11-24T13:45:00-09:00</updated>
+        <published>2026-11-24T13:45:00-09:00</published>
+        <author>
+            <name>NWS</name>
+        </author>
+        <title>Winter Weather Advisory issued November 24 at 1:45PM AKST until November 27 at 3:00PM AKST by NWS Fairbanks AK</title>
+        <summary>* WHAT...Blowing Snow. Winds gusting as high as 45 mph.
+
+* WHERE...Central and Eastern Beaufort Sea Coast.
+
+* WHEN...Until 3 PM AKST Friday.
+
+* IMPACTS...Areas of blowing snow could significantly reduce
+visibility.
+
+* ADDITIONAL DETAILS...No additional falling snow is expected. Strong
+winds will blow snow already on the ground to create areas of low
+visibility near the surface. A brief decrease in winds is expected
+Wednesday before winds strengthen once more Thursday.</summary>
+        <cap:event>Winter Weather Advisory</cap:event>
+        <cap:sent>2026-11-24T13:45:00-09:00</cap:sent>
+        <cap:effective>2026-11-24T13:45:00-09:00</cap:effective>
+        <cap:onset>2026-11-24T13:45:00-09:00</cap:onset>
+        <cap:expires>2026-11-25T07:00:00-09:00</cap:expires>
+        <cap:status>Actual</cap:status>
+        <cap:msgType>Update</cap:msgType>
+        <cap:category>Met</cap:category>
+        <cap:urgency>Expected</cap:urgency>
+        <cap:severity>Moderate</cap:severity>
+        <cap:certainty>Likely</cap:certainty>
+        <cap:areaDesc>Central Beaufort Sea Coast; Eastern Beaufort Sea Coast</cap:areaDesc>
+        <cap:polygon/>
+        <cap:geocode>
+            <valueName>SAME</valueName>
+            <value>002185</value>
+        </cap:geocode>
+        <cap:geocode>
+            <valueName>UGC</valueName>
+            <value>AKZ804</value>
+        </cap:geocode>
+        <cap:geocode>
+            <valueName>UGC</valueName>
+            <value>AKZ805</value>
+        </cap:geocode>
+        <cap:parameter>
+            <valueName>AWIPSidentifier</valueName>
+            <value>WSWNSB</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>WMOidentifier</valueName>
+            <value>WWAK41 PAFG 242245</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>NWSheadline</valueName>
+            <value>WINTER WEATHER ADVISORY REMAINS IN EFFECT UNTIL 3 PM AKST FRIDAY</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>BLOCKCHANNEL</valueName>
+            <value>EAS</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>BLOCKCHANNEL</valueName>
+            <value>NWEM</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>BLOCKCHANNEL</valueName>
+            <value>CMAS</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>VTEC</valueName>
+            <value>/O.CON.PAFG.WW.Y.0100.000000T0000Z-261128T0000Z/</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>eventEndingTime</valueName>
+            <value>2026-11-27T15:00:00-09:00</value>
+        </cap:parameter>
+        <cap:parameter>
+            <valueName>expiredReferences</valueName>
+            <value>w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.82d942d4bf4ad2abb1825790e1a10e8bc61cae4e.001.1,2026-11-23T12:00:00-09:00</value>
+        </cap:parameter>
+        <cap:scope>Public</cap:scope>
+        <cap:code>IPAWSv1.0</cap:code>
+        <cap:language>en-US</cap:language>
+        <cap:web>http://www.weather.gov</cap:web>
+        <cap:eventCode>
+            <valueName>SAME</valueName>
+            <value>NWS</value>
+        </cap:eventCode>
+        <cap:eventCode>
+            <valueName>NationalWeatherService</valueName>
+            <value>WWY</value>
+        </cap:eventCode>
+    </entry>
+</feed>
