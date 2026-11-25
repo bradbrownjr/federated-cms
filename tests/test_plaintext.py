@@ -542,6 +542,40 @@ class HardeningHtmlTests(unittest.TestCase):
         self.assertIsNone(doc.title)
 
 
+class ReviewFindingTests(unittest.TestCase):
+    def test_dropped_element_closes_at_matching_end_tag(self):
+        cases = ['<div hidden><div>x</div>LEAK</div><p>ok</p>',
+                 '<div aria-hidden="true"><div>a</div>LEAK</div><p>ok</p>',
+                 '<nav><nav>a</nav>LEAK</nav><p>ok</p>',
+                 '<aside><div><aside>a</aside>LEAK</div></aside><p>ok</p>',
+                 '<svg><svg></svg>LEAK</svg><p>ok</p>']
+        for page in cases:
+            with self.subTest(page=page):
+                self.assertEqual(body(page), "ok")
+
+    def test_banner_with_nested_divs(self):
+        page = ('<body><div id="major_header" role="banner">'
+                '<div id="search" role="search"><form><div class="form-group">'
+                '<div class="input-group"><input type="text">'
+                '<div class="input-group-append"><button>Search</button></div>'
+                '<label class="sr-only"> Search GML:</label></div></div></form></div>'
+                '<a href="/"><img alt="logo"></a>'
+                '<div id="brand"><div>Global Monitoring Laboratory</div></div>'
+                '</div><p>Solar calculator.</p></body>')
+        self.assertEqual(body(page), "Solar calculator.")
+
+    def test_start_tag_closes_unclosed_head(self):
+        self.assertEqual(html_to_text("<head><title>T</title><body><p>body text"), ("T", "body text"))
+        self.assertEqual(html_to_text("<head><meta charset=utf-8><title>T</title><p>para"), ("T", "para"))
+        self.assertEqual(html_to_text("<head><style>p{}</style><script>x()</script><link rel=x>"
+                                      "<title>T</title></head><p>x"), ("T", "x"))
+
+    def test_pre_tabs_expand_on_assembled_text(self):
+        self.assertEqual(html_to_text("<pre>a\t<b>b</b>\tc</pre>", ascii=True)[1],
+                         "a       b       c")
+        self.assertEqual(body("<pre>a\t<b>b</b>\tc</pre>"), "a       b       c")
+
+
 class HardeningCostTests(unittest.TestCase):
     def check(self, expression):
         self.assertLessEqual(len(eval(expression).encode()), 2_000_000)
@@ -555,6 +589,15 @@ class HardeningCostTests(unittest.TestCase):
 
     def test_many_tiny_blocks(self):
         self.check("'<div>' * 255 + '<p>a</p>' * ((2_000_000 - 5 * 255) // 8)")
+
+    def test_text_under_deep_inline_nesting(self):
+        self.check("'<p>' + '<span>' * 254 + '<i>w</i> ' * 220_000")
+
+    def test_text_under_deep_quotes(self):
+        self.check("'<blockquote>' * 150 + '<i>w</i> ' * 220_000")
+
+    def test_text_under_deep_tables(self):
+        self.check("'<table><tr><td>' * 80 + '<i>w</i> ' * 220_000")
 
 
 class HardeningNwsTests(unittest.TestCase):

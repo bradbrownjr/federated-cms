@@ -186,10 +186,16 @@ and any forecaster identifier after `$$` stay.
 ### `html_to_text(markup: str, *, width: int = 69, ascii: bool = False) -> tuple[str | None, str]`
 
 Returns `(title, text)`. With `ascii=False` the text is not converted
-to ASCII. With `ascii=True` every piece of text (text nodes and `pre`
-content) goes through `to_ascii` before layout, so wrapping, underline
-lengths, list indents and the width rule all hold on the ASCII text, and
-the title is converted too. `extract` uses `ascii=True`.
+to ASCII. With `ascii=True` text goes through `to_ascii` before layout,
+so wrapping, underline lengths, list indents and the width rule all hold
+on the ASCII text, and the title is converted too. `extract` uses
+`ascii=True`. Each text node is converted on its own, except that
+whitespace at the end of a node is kept, because it separates words
+from the next node (`a<b> b</b>` and `a <b>b</b>` both give `a b`).
+Because each node is converted on its own, the `°` rule only sees a
+capital letter in the same node: `45°<b>F</b>` gives `45 degF`. `pre`
+content is converted after its text is assembled, so tabs expand
+against the start of the assembled line.
 
 NUL characters (U+0000) are removed from `markup` before parsing; they
 never produce a line break or any other output. The parser is closed at
@@ -225,9 +231,21 @@ Nesting is limited to 256 open elements: deeper start tags open no
 scope and their text joins the enclosing element, except that a
 dropped element still opens one (so `<script>` content stays out). A dropped element stays
 dropped until its own end tag (or the end of the document), whatever
-nests inside it, and no text inside a dropped element appears anywhere
+nests inside it. Its own end tag is the one that matches it: start tags
+of the same name opened inside it are counted, so in
+`<div hidden><div>x</div>y</div>` the first `</div>` closes the inner
+`div` and `y` is still dropped. No text inside a dropped element appears
+anywhere, and no text inside a dropped element appears anywhere
 in the output: not in tables, lists, headings or the title fallback.
 Character references are decoded.
+
+**Implied end of `head`:** as in the HTML "in head" insertion mode
+(<https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inhead>),
+`</head>` may be left out. While `head` is open, a start tag other than
+`base`, `basefont`, `bgsound`, `link`, `meta`, `title`, `style`,
+`script`, `noscript`, `noframes` or `template` closes `head` first and
+is then handled as usual, so `<head><title>T</title><body><p>x` has the
+title `T` and the text `x`.
 
 **Blocks** are separated by one blank line: `p`, `div`, `section`,
 `article`, `main`, `blockquote`, `pre`, `table`, `ul`, `ol`, `dl`,
@@ -250,8 +268,9 @@ collapses to single spaces. Empty blocks produce nothing.
   same way.
 - **`blockquote`:** every output line, including wrapped ones, starts
   `> `.
-- **`pre`:** text kept exactly, tabs expanded to 8; not wrapped or
-  collapsed. A `br` inside it is a line break. Leading and trailing
+- **`pre`:** text kept exactly, tabs expanded to 8 on the assembled
+  text (so `<pre>a\t<b>b</b>\tc</pre>` puts `c` at column 16, counting
+  from 0); not wrapped or collapsed. A `br` inside it is a line break. Leading and trailing
   blank lines inside it are removed.
 - **`br`:** line break within the block.
 - **`hr`:** the line `---`.
@@ -277,14 +296,19 @@ to `width` with `textwrap`, `break_long_words=False` and
 The text ends without trailing blank lines.
 
 **Cost:** time is linear in the input, with a small per-tag cost that
-does not grow with the number of open elements. The limit is relative
+does not grow with the number of open elements, and formatting work
+that does not grow with nesting depth times text size (each piece of
+text is laid out once, not once per enclosing element). The limit is relative
 to the standard library parser, so it holds on a slow or busy machine:
 on each input below, `extract` takes at most 4 times as long as one
 `html.parser.HTMLParser(convert_charrefs=True)` `feed` and `close` of the
 same input decoded as UTF-8, plus 2 seconds, both timed in the same
 process. The inputs are all within the default `max_input_bytes`: 256
 nested `<div>` then `<p>` repeated to 2,000,000 bytes; 660,000 `<b>`
-tags; 255 nested `<div>` then `<p>a</p>` repeated to 2,000,000 bytes.
+tags; 255 nested `<div>` then `<p>a</p>` repeated to 2,000,000 bytes;
+`<p>` and 254 nested `<span>` then `<i>w</i> ` repeated 220,000 times;
+150 nested `<blockquote>` then the same text; 80 nested
+`<table><tr><td>` then the same text.
 The same limit applies to `decode` of 2,000,000 bytes declared as
 `charset=punycode` (an unknown label), against a UTF-8 decode plus one
 parser pass of the same bytes.
