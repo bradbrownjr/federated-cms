@@ -335,6 +335,13 @@ address, when they are equal, or when both are IPv6 and share the same
 /64. This stops a request to the node's own public address, or to a
 neighbour on its IPv6 subnet, without a configured list.
 
+If either address is IPv4-mapped (`::ffff:0:0/96`), each mapped address
+is replaced by its embedded IPv4 address, and the two are refused only
+when equal; the /64 rule does not apply. Every IPv4-mapped address
+shares the /64 `::/64`, so a dual-stack socket connected to
+`::ffff:93.184.215.14` from local `::ffff:192.0.2.50` would otherwise be
+refused.
+
 **All answers are checked.** If any address returned for a name is
 refused, the whole hop fails with `FetchAddressError` and nothing is
 connected. A name that resolves to both public and private addresses is
@@ -422,7 +429,11 @@ class Network(Protocol):
   `SystemNetwork` instances in the process (abandoned ones count until
   `getaddrinfo` returns). A ninth call raises `OSError` without starting
   a thread, which `fetch` reports as `FetchConnectError`. This bounds
-  the threads a stuck resolver can pile up.
+  the threads a stuck resolver can pile up. The cap is process-wide, not
+  per caller: a service that starts many fetches at once gets
+  `FetchConnectError` while lookups are stuck, so callers should queue
+  fetches (for example a small worker pool) rather than start one thread
+  per request.
 - `connect` creates a `socket.socket` of the address's family, sets
   `timeout`, connects to `(address, port)` and returns the socket. It
   does no name resolution.
@@ -505,11 +516,13 @@ So do:
 - A final status from 101 to 199. `http.client` skips `100 Continue`
   responses itself; any other 1xx it would return as the final
   response.
-- `Transfer-Encoding`, judged on all its field lines joined with `", "`,
-  that is anything other than `chunked` (case-insensitive, surrounding
-  spaces ignored). `http.client` only decodes `chunked`, and would
-  otherwise return chunk framing as content. So `gzip, chunked`, and
-  `chunked` sent twice, are refused.
+- `Transfer-Encoding` whose value, as `http.client` reports it (all
+  field lines joined with `", "`), is not exactly `chunked`: lower case,
+  no surrounding whitespace. `http.client` decodes chunked framing only
+  when its own comparison matches and otherwise reads to the end of the
+  connection, so any value this rule normalized differently would return
+  chunk framing as content. `Chunked `, `CHUNKED`, `gzip, chunked`, and
+  `chunked` sent twice are all refused.
 - `Transfer-Encoding` and `Content-Length` both present. RFC 9112
   section 6.3: "Such a message might indicate an attempt to perform
   request smuggling ... and ought to be handled as an error."
@@ -536,6 +549,11 @@ number of trailer lines, none of which count as body.
   redirect is a `GET` with the same request headers. Other 3xx
   statuses, and a redirect status without `Location`, are returned as
   the result.
+- A followable redirect status with more than one `Location` field line
+  is `FetchProtocolError`, even when the values are equal. RFC 9110
+  section 10.2.2: "The field value consists of a single URI-reference."
+  Picking one would let a server show one target to a filter and follow
+  another.
 - `Location` is resolved with `urllib.parse.urljoin` against the
   current normalized URL (RFC 9110 section 10.2.2: "When it has the form
   of a relative reference ..., the final value is computed by resolving

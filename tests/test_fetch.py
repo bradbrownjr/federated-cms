@@ -330,6 +330,7 @@ def server_tls_context() -> ssl.SSLContext:
 def client_tls_context() -> ssl.SSLContext:
     ctx = ssl.create_default_context(cafile=str(FIXTURES / "ca.pem"))
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.keylog_filename = None      # create_default_context copies SSLKEYLOGFILE
     return ctx
 
 
@@ -1860,3 +1861,71 @@ def test_only_fetch_module_passes_network():
             if isinstance(node, ast.Call) and any(k.arg == "network" for k in node.keywords):
                 offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
     assert offenders == []
+
+
+# ------------------------------------------------------- code review fixes
+
+
+@pytest.mark.parametrize("value", [b" Chunked ", b"CHUNKED", b"Chunked", b"chunked "])
+def test_transfer_encoding_must_be_exactly_chunked(server, net, value):
+    server.routes["/te"] = raw(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: " + value +
+                               b"\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n")
+    with pytest.raises(FetchProtocolError):
+        get("http://public.example/te", net, read_timeout=1, total_timeout=3)
+
+
+MAPPED = "::ffff:" + PUBLIC_V4
+
+
+class _MappedNetwork(_SelfNetwork):
+    def __init__(self, port, local):
+        super().__init__(port, local)
+        self.answers["mapped.example"] = [MAPPED]
+        self.routes[(MAPPED, 80)] = port
+
+
+@pytest.mark.parametrize("local", [
+    ("127.0.0.1", 50000),                         # what the plain seam reports
+    ("::ffff:192.0.2.50", 50000, 0, 0),           # dual-stack socket: same ::/64
+    ("192.0.2.50", 50000),
+])
+def test_ipv4_mapped_peer_is_not_self(server, local):
+    net = _MappedNetwork(server.port, local)
+    server.routes["/"] = ok(b"mapped")
+    result = get("http://mapped.example/", net)
+    assert result.content == b"mapped"
+    assert result.address == MAPPED
+
+
+@pytest.mark.parametrize("local", [
+    (MAPPED, 50000, 0, 0),
+    (PUBLIC_V4, 50000),
+])
+def test_ipv4_mapped_self_connection_refused(server, local):
+    net = _MappedNetwork(server.port, local)
+    server.routes["/"] = ok()
+    with pytest.raises(FetchAddressError):
+        get("http://mapped.example/", net)
+    assert server.log == []
+
+
+@pytest.mark.parametrize("locations", [
+    ("/ok", "http://127.0.0.1/"),
+    ("/ok", "/ok"),
+])
+def test_more_than_one_location_is_protocol_error(server, net, locations):
+    server.routes["/r"] = lambda h: send(h, 302, b"", [("Location", x) for x in locations])
+    server.routes["/ok"] = ok()
+    with pytest.raises(FetchProtocolError) as err:
+        get("http://public.example/r", net)
+    assert err.value.url == "http://public.example/r"
+    assert len(server.log) == 1
+    assert net.addresses == [PUBLIC_V4]
+
+
+def test_tls_basic_case_with_sslkeylogfile_set(tls_server, tls_net, monkeypatch, tmp_path):
+    monkeypatch.setenv("SSLKEYLOGFILE", str(tmp_path / "keys.log"))
+    tls_server.routes["/ok"] = ok(b"secret")
+    result = get("https://secure.example/ok", tls_net, ssl_context=client_tls_context())
+    assert result.content == b"secret"
+    assert tls_server.sni == ["secure.example"]
