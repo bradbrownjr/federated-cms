@@ -23,7 +23,14 @@ class B2ValidationTests(unittest.TestCase):
     def test_message_sections_must_be_complete(self):
         valid = b"Mid: ABC123\r\nBody: 5\r\nFile: 3 x.bin\r\n\r\nhello\r\n\x00\x01\x02\r\n"
         self.assertEqual(message_mid(valid), "ABC123")
+        self.assertEqual(message_mid(valid + b"\x00"), "ABC123")
+        two_files = (b"Mid: ABC123\r\nBody: 5\r\nFile: 3 x.bin\r\nFile: 2 y.bin\r\n\r\n"
+                     b"hello\r\n\x00\x01\x02\r\nxy\r\n\x00")
+        self.assertEqual(message_mid(two_files), "ABC123")
         invalid = [
+            valid + b"\x00\x00",
+            valid + b"other",
+            b"Mid: ABC123\r\nBody: 0\r\n\r\n\r\n\x00",
             b"Mid: ABC123\r\nBody: 999\r\n\r\nshort",
             b"Mid: ABC123\r\nBody: 5\r\nFile: 4 x\r\n\r\nhello\r\nabc",
             b"Mid: ABC123\r\nBody: -1\r\n\r\n",

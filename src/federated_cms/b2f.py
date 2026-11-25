@@ -148,7 +148,7 @@ class Session:
 
     def run(self) -> None:
         try:
-            self.send("[FCMS-0.1-B2FHM$]")
+            self.send("[FCMS-0.1-B2FWHM$]")
             challenge = f"{secrets.randbelow(100_000_000):08d}"
             self.send(f";PQ: {challenge}")
             self.send("FCMS LAB >")
