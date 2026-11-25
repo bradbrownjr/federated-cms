@@ -56,7 +56,7 @@ cannot disagree after a crash; this needs `store_message`
 (`lab_mailbox.py:119-131`) to take both writes. The worker can be a
 thread or a separate process on the same database; leases make both safe.
 
-**Same-session replies (OPEN).** Production Winlink answered on the next
+**Same-session replies (on by default).** Production Winlink answered on the next
 connection, about a minute later (`docs/INQUIRY-ADAPTER.md:69-71`). For
 items answerable without the Internet (`HELP`, `LIST`, static items,
 cache hits), the session could wait up to `same_session_wait` (proposed
@@ -106,13 +106,13 @@ reply_from = "SERVICE"
 [robot]
 menu_expiry_days = 7
 max_wait_minutes = 360            # how long an item may wait for a fetch
-same_session_wait_seconds = 2     # 0 disables (OPEN, section 1)
+same_session_wait_seconds = 2     # 0 disables (section 1)
 url_items = true                  # http(s) lines in INQUIRY
 deny_networks = []                # passed to fetch(), e.g. the node's public IP
 blocked = []                      # callsigns whose requests are ignored
 
 [limits]                          # section 6
-messages_per_day = 60
+messages_per_day = 100
 
 [catalog]
 file = "catalog.tsv"
@@ -434,15 +434,15 @@ try later". Fresh data is never invented (`docs/DECISIONS.md:33`,
 ## 6. Limits per callsign
 
 Counted per B2F account in UTC windows from the robot's own tables, so
-there is no separate counter to drift. Defaults are proposals pending lab
-measurement (`INTERACTIVE-SERVICES.md:448-449`).
+there is no separate counter to drift. Defaults were chosen on 2026-11-25
+and are to be revisited after lab measurement.
 
 | Limit | Default | Counted from | Checked |
 | --- | --- | --- | --- |
 | Items per request | 32 | Parser (`INQUIRY-ADAPTER.md:56-58`); menu selections | Parse |
 | Requests per hour | 10 | `robot_inbox`, rolling 60 min | Parse, before any item |
-| Messages per day | 60 | `robot_replies` since 00:00 UTC | Before fetching, and at reply commit |
-| Bytes per day | 300,000 | `robot_replies.body_bytes` since 00:00 UTC | Reply commit |
+| Messages per day | 100 | `robot_replies` since 00:00 UTC | Before fetching, and at reply commit |
+| Bytes per day | 1,000,000 | `robot_replies.body_bytes` since 00:00 UTC | Reply commit |
 | Parts per item | 12 | Parts of one item | Reply build |
 | Invalid requests per day | 5 | Error replies for bad messages | Parse |
 | Undelivered replies | 100 | `delivered=0` outbox rows | Parse |
@@ -470,7 +470,7 @@ CREATE TABLE robot_notices (
 `INQUIRY - limit reached`, not itself counted:
 
 ```text
-Limit reached for N0CALL: 60 reply messages per day.
+Limit reached for N0CALL: 100 reply messages per day.
 Not processed: WX FN43, WIKI Mercury (planet).
 The limit resets at 00:00 UTC. Send these again after that.
 ```
@@ -778,18 +778,23 @@ Bad data (NWS problem details, missing fields) raises
 `FormatError(ValueError)` with a short code the robot maps to an error
 reply.
 
-## Open questions for the project lead
+## Decisions
 
-1. Same-session replies for local answers (section 1): on by default?
+Made on 2026-11-25:
+
+1. Same-session replies for local answers: on, waiting up to 2 s.
 2. Reply `Type:`: `Private` until the lab shows what Express does with
    `Service` or `System`.
-3. `QTH`: no reply to a valid report, assumed to match Winlink.
-4. Default limits (section 6) before lab measurements exist.
-5. Should a request waiting on the Internet get an immediate "queued"
-   reply? This design sends none, to save airtime.
-6. URL items on by default, or off until the sysop enables them?
-7. Split or truncate long content for services other than `WIKI` and
-   `NEWS` (`INTERACTIVE-SERVICES.md:466-467`).
-8. With federation, an item a node cannot fetch could become a request
+3. `QTH`: no reply to a valid report.
+4. Default limits: those in section 6 (32 items per request, 10 requests
+   per hour, 100 messages and 1 MB per day per callsign).
+5. No "queued" reply for a request waiting on the Internet.
+6. URL items: on by default; the sysop can turn them off.
+7. `WIKI` and `NEWS` split long content; other services truncate with
+   the extractor's note.
+
+## Open questions
+
+1. With federation, an item a node cannot fetch could become a request
    envelope to a peer (`docs/REQUEST-ENVELOPE-v0.1.md`) filling the same
    cache. Not designed here.
