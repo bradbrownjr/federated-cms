@@ -14,7 +14,7 @@ import sys
 import time
 
 from kissterm.ax25.address import AX25Address
-from kissterm.ax25.frame import UType
+from kissterm.ax25.frame import AX25Frame, UType
 from kissterm.ax25.session import LinkParams
 from kissterm.ax25.station import AX25Station
 from kissterm.transport.base import SessionState, TransportError, TransportState
@@ -84,6 +84,12 @@ class ScopedKiss(TcpKissTransport):
                    and frame.utype is not UType.UI
                    and (source.callsign, source.ssid) == (self.peer.callsign, self.peer.ssid)
                    and self._session_allows(frame))
+        if allowed and frame.utype is UType.SABME:
+            # TCP KISS decodes I/S frames as modulo 8. Refuse extended setup
+            # so the caller can retry with SABM before opening the mailbox.
+            allowed = False
+            await self.send_frame(AX25Frame.u_frame(frame.path.reply(), UType.DM,
+                                                    pf=frame.pf, command=False), port)
         if addressed:
             kind = frame.utype.name if frame.kind == 'U' and frame.utype is not None else frame.kind
             print(f'RX port={port} source={source} kind={kind} direct={not frame.path.repeaters} '
