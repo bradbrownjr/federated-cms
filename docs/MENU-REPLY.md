@@ -1,16 +1,19 @@
 # Menu replies: parser contract
 
 `federated_cms.menu_reply` reads the message a Winlink client sends when a
-user answers a numbered menu (design: `INTERACTIVE-SERVICES.md`, branch
-`docs/interactive-services`, "Menus" and "Reading a reply"). It does no I/O
+user answers a numbered menu with Reply. Menus come from the node's service
+address, so the answer is addressed to it (design:
+[INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md), "Two layers", "Menus"
+and "Reading a reply"). It does no I/O
 and looks nothing up: it returns the menu code and the choice, and the caller
 checks the code, the sender and the expiry. Tests: `tests/test_menu_reply.py`;
-fixtures: `tests/fixtures/menu_reply/` (synthetic, callsign `N0CALL`).
+fixtures: `tests/fixtures/menu_reply/` (synthetic, callsign `N0CALL`,
+addressed to `FCMS`).
 
 ## API
 
 ```python
-def parse_menu_reply(message: bytes) -> MenuReply
+def parse_menu_reply(message: bytes, *, address: str = "FCMS") -> MenuReply
 
 @dataclass(frozen=True)
 class MenuReply:
@@ -24,6 +27,14 @@ class MenuReplyError(ValueError):
 
 - `message` is the whole MIME message as bytes. Any other type raises
   `TypeError`.
+- `address` is the node's service address, keyword-only, default
+  `inquiry.DEFAULT_SERVICE_ADDRESS` (`FCMS`). It is checked with
+  `inquiry.check_service_address` ([INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md#service-address)):
+  a value that is not a `str` raises `TypeError`, an invalid or reserved
+  one (`SERVICE`, `INQUIRY`, `QTH` and the rest) raises `ValueError` that
+  is not a `MenuReplyError`. Both checks come after the `message` type
+  check and before step 1, so a bad configuration never looks like a bad
+  message.
 - For every `bytes` input the function returns a `MenuReply` or raises
   `MenuReplyError`. No other exception may escape (no `RecursionError`,
   `UnicodeError`, `KeyError` or `email` internals).
@@ -58,9 +69,14 @@ The first rule that fails raises its reason.
    (`=?...?=`) are never decoded in addresses (RFC 2047 section 5), so
    `To: =?utf-8?b?U0VSVklDRUB4?=` is not `SERVICE@x`. The message must have
    at least one address whose local part, judged with `address_local_part`
-   from `federated_cms.inquiry`, is `SERVICE`: the domain is ignored,
-   matching is case-insensitive and ASCII only, and `SERVICES`, `SERVICE.X`
-   and a non-ASCII look-alike do not match. Otherwise `no service address`.
+   from `federated_cms.inquiry`, equals `address`: the domain and a leading
+   `SMTP:` are ignored (`getaddresses` reads `SMTP:FCMS@lab.example` as a
+   group named `SMTP` holding `FCMS@lab.example`), matching is
+   case-insensitive and ASCII only, and `FCMSS`, `FCMS.X`, `FCMS-1` and a
+   non-ASCII look-alike (`FCM\u017f`, whose long s upper-cases to `S` in
+   Python) do not match. `SERVICE` matches only when it is `address`, which
+   `check_service_address` refuses, so mail to `SERVICE` is never a menu
+   reply. Otherwise `no service address`.
    Tests use only well-formed addresses for the accepting cases, because
    `getaddresses` is stricter in some Python 3.11 patch releases than in
    others (gh-102988); the result for malformed lists is `no service
@@ -153,7 +169,11 @@ encoding`, `non-ASCII`, `empty choice`, `invalid choice`, `invalid range`,
 ## Observed message
 
 The structure the fixture copies is recorded in `INTERACTIVE-SERVICES.md`
-("Reading a reply"): Winlink Express, 2026-11-25. Headers `Subject`, `To`,
+("Reading a reply"): Winlink Express, 2026-11-25, a reply to a message from
+`SERVICE`. The fixtures keep that shape but are addressed `To: FCMS`, with
+`FCMS` in the separator and the quoted header, as a reply to the node
+would be; Express's own `To:` and separator for such a reply are a lab
+test. Headers `Subject`, `To`,
 `Message-ID`, `X-Location`, `Content-Type: multipart/mixed`; one
 `text/plain; charset="iso-8859-1"` quoted-printable part holding the choice,
 the separator line, then the unmarked original, in which a UTF-8 non-breaking

@@ -1,7 +1,10 @@
-# Winlink-style service messages: parser contract
+# Service messages: parser contract
 
-`federated_cms.inquiry` recognizes the service addresses Winlink clients
-already use and parses their message bodies. It does no I/O and makes no
+`federated_cms.inquiry` recognizes the addresses Winlink clients already
+use for inquiries and position reports (the compatibility layer), checks
+the node's own service address (the native layer), and parses the message
+bodies of both. The two layers are described in
+[INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#two-layers). It does no I/O and makes no
 authorization decision; a mailbox adapter calls it after a B2 message is
 accepted. Tests: `tests/test_inquiry.py`. Menu replies from clients are read by
 `federated_cms.menu_reply`, see [MENU-REPLY.md](MENU-REPLY.md).
@@ -26,7 +29,10 @@ case-insensitive on the whole local part.
 | `INQUIRY` | Catalog requests | Winlink FAQ Q820, Q830 (pp. 46–47) |
 | `QTH` | Position reports | Winlink FAQ Q7560 (p. 96); wl2k-go `catalog/position_report.go` |
 
-`OPTIONS` (account settings, FAQ Q11650) is not handled yet.
+`OPTIONS` (account settings, FAQ Q11650) is not handled. `service_for`
+does not return the node's service address; the robot matches that with
+`address_local_part` against its configuration (see [Service
+address](#service-address)).
 
 ## Catalog request (`INQUIRY`)
 
@@ -126,17 +132,23 @@ BOM and CRLF line endings. Descriptions include non-ASCII text such as
   catalog list`), but sending it returned the catalog itself, matching the
   parser's special handling.
 
-So a catalog entry is an ID mapped to a source. Our server answers from
-`SERVICE`, one reply per item, with the extracted text as the body. Replies
+So a catalog entry is an ID mapped to a source. The node answers from its
+own service address, one reply per item, with the extracted text as the
+body. Replies
 use plain ASCII where possible so the charset mismatch cannot occur.
 
-## Service commands (`INQUIRY`)
+## Service commands
 
-A body line may be a service command such as `WIKI Mercury | 2`, handled by
-a node service instead of the catalog. Design: `INTERACTIVE-SERVICES.md`
-(branch `docs/interactive-services`, "Requests"). This section is the parser
-contract only; the parser does not know what any verb does. Tests:
-`tests/test_inquiry.py`, class `ServiceCommandTests`.
+A body line may be a service command such as `WIKI Mercury | 2`. Commands
+belong to the native layer: they run when sent to the service address
+(`parse_commands`, [below](#service-address)). In `INQUIRY` mail,
+`parse_inquiry` still recognises them, so the robot can list them in one
+reply pointing to the service address instead of reporting them as bad
+catalog IDs; they are not run (design:
+[INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#compatibility-requests)).
+This section is the grammar and the `parse_inquiry` contract; the parser
+does not know what any verb does. Tests: `tests/test_inquiry.py`, class
+`ServiceCommandTests`.
 
 ### Signature
 
@@ -228,6 +240,119 @@ line whose first word only looks like a verb (`WIKIS x`, `w\u0131ki x`).
   33rd distinct accepted item is rejected with `too many items`.
 - A body of only service lines is not empty. An empty request, a bad subject
   and an oversized body raise `InquiryError` as before.
+
+## Service address
+
+The native layer's address: `FCMS` unless the sysop sets another. Tests:
+`tests/test_inquiry.py`, classes `ServiceAddressTests` and
+`NativeCommandTests`.
+
+```python
+DEFAULT_SERVICE_ADDRESS = "FCMS"
+RESERVED_ADDRESSES = frozenset({"INQUIRY", "QTH", "SERVICE", "SYSTEM", "OPTIONS", "POSTMASTER", "MAILER-DAEMON"})
+
+def check_service_address(address: str) -> str
+def parse_commands(body: str, *, services: frozenset[str]) -> InquiryRequest
+```
+
+### `check_service_address`
+
+Returns `address` unchanged when it is valid. A value that is not a `str`
+raises `TypeError`; an invalid one raises `ValueError`. Valid means all of:
+
+- 3 to 12 characters;
+- ASCII upper-case letters only, or letters, one `-`, then letters and
+  digits: the full match of `[A-Z]+(-[A-Z0-9]+)?`;
+- not in `RESERVED_ADDRESSES`.
+
+The form is Winlink's rule for tactical addresses: "alpha characters only,
+or alpha characters, followed by a dash, followed by alphanumeric
+characters", at most 12 characters including the dash (Winlink FAQ,
+2023-03-11, Q7030, p. 94; also Q360, p. 20). Express users already type
+such names, so the address is one a Winlink client can be expected to
+address. Because the part before any `-` is letters only, the address can
+never equal a callsign, which always contains a digit, so it cannot
+collide with a user's account. The minimum of 3 is this project's choice.
+Upper case only, so a configuration has one spelling; mail matches it
+case-insensitively through `address_local_part`.
+
+UNVERIFIED, and tested in the lab ([ON-AIR-TESTS.md](ON-AIR-TESTS.md)):
+whether Express accepts an address that has no Winlink account, written
+bare (`FCMS`) or with another domain (`FCMS@lab.example`), and what it puts
+in `To:`. wl2k-go, Pat's library, does no check: `AddressFromString` keeps
+a bare name, upper-cased, and turns a name with a domain other than
+`winlink.org` into `SMTP:<name>@<domain>` (`fbb/message.go` at 1d59b0a).
+Either form reduces to the local part through `address_local_part`.
+
+`RESERVED_ADDRESSES` holds the compatibility addresses, Winlink's own
+system and account-settings addresses, and the usual mail-system names.
+The robot's loop rules use the same set ([INQUIRY-ROBOT.md](INQUIRY-ROBOT.md#mail-loops)).
+
+### `parse_commands`
+
+Reads the body of a message to the service address. The subject is not an
+argument: it is not read for commands. The robot first calls
+`menu_reply.parse_menu_reply`; only a `no code` result makes the message a
+command message ([INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#native-requests)).
+
+**Arguments**, checked in this order before the body is read:
+
+- `services` is required and keyword-only, with the same rules as in
+  `parse_inquiry`: a `set` or `frozenset` of `str` (else `TypeError`),
+  each matching `[A-Z][A-Z0-9_-]{0,31}` and not `LIST` or `UPDATE_CAT`
+  (else `ValueError` that is not an `InquiryError`). The robot passes the
+  configured verbs plus `HELP`.
+- `body` must be a `str`, else `TypeError`.
+
+**Body**, each failure an `InquiryError`:
+
+1. More than 65,536 characters, or more than 65,536 bytes as UTF-8:
+   `body too large`. The character count is compared first.
+2. A lone surrogate anywhere: `invalid body`.
+3. A leading U+FEFF is removed.
+4. Lines are split at CRLF, LF or CR. Reading stops before the first line
+   that, as split and not stripped, matches in full (`re.fullmatch`)
+   `----- Message from .+ sent [0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2} -----`.
+   This is the separator Express writes above a quoted original
+   (observed, [INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#reading-a-reply));
+   `menu_reply` uses the same pattern. Any sender name matches. A trailing
+   space, a leading space, text before it or non-ASCII digits make it an
+   ordinary line.
+5. The text before that line (the whole body when there is none) may be at
+   most 8,192 bytes as UTF-8: `body too large`. So a Reply that quotes a
+   12,000-character article still fits, while the part the user wrote has
+   `parse_inquiry`'s limit.
+
+**Lines** before the separator, numbered from 1 (blank and comment lines
+count):
+
+- Comments are removed and the line trimmed as in `parse_inquiry`; a line
+  that is then empty is skipped.
+- A line whose first word is in `services` is a service command, parsed by
+  the grammar in [Service commands](#service-commands) with the same
+  results and rejection reasons (`invalid characters`, `arguments too
+  long`, `multiple choices`, `empty choice`, `choice too long`). For a
+  body of command lines, `parse_commands(body, services=s)` equals
+  `parse_inquiry("REQUEST", body, services=s)`.
+- Any other line is rejected, the first matching reason:
+
+  | Reason | When |
+  | --- | --- |
+  | `invalid characters` | a non-ASCII character, or a control character (C0 other than tab, and DEL) |
+  | `inquiry item` | the line, upper-cased (ASCII), is `LIST` or `UPDATE_CAT`, or starts with `HTTP://` or `HTTPS://` |
+  | `unknown command` | anything else, including catalog IDs, bare numbers and `MORE` |
+
+- `RejectedLine.text` is formed as in `parse_inquiry`: after comment
+  removal and trimming, cut to 80 characters, control characters replaced
+  with `?`.
+- Duplicates are dropped and the 33rd distinct command is rejected with
+  `too many items`, as in `parse_inquiry`. Rejected lines do not count
+  toward the limit.
+
+**Result:** an `InquiryRequest` whose items all have kind `service`. A
+body with nothing to read (empty, blank lines, comments, or a separator
+first) returns `InquiryRequest((), ())` and raises nothing; the robot
+answers it with the `HELP` reply.
 
 ## Position report (`QTH`)
 
