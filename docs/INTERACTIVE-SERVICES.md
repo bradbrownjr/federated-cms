@@ -61,7 +61,7 @@ Content bodies are rendered by `federated_cms.plaintext.render`: title,
 3. Mercury (mythology)
 4. Freddie Mercury
 
-Reply to this message with the numbers you want, for example 2, 1 3 or 2-4.
+Reply with the numbers you want, for example 2, 1 3 or 2-4.
 Each number is the same as sending: WIKI <its title>
 Menu K7QX for N0CALL, valid until 2026-12-02 01:00 UTC.
 ```
