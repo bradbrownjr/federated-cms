@@ -1,0 +1,5 @@
+# ID	CATEGORY	TARGET	DESCRIPTION
+NODE_INFO	LOCAL	text:files/node-info.txt	About this node
+
+NET_TIMES	NETS	text:files/net-times.txt	Weekly net schedule
+BAND_PLAN	LOCAL	text:files/band-plan.txt	Local band plan

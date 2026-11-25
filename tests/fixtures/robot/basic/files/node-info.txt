@@ -1,0 +1,2 @@
+This is a test node for the INQUIRY robot.
+It answers HELP, LIST and the items in LIST.

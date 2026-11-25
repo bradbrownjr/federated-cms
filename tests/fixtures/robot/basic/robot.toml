@@ -1,0 +1,6 @@
+[node]
+name = "N1TEST-10"
+contact = "sysop@example.org"
+
+[catalog]
+file = "catalog.tsv"
