@@ -72,6 +72,7 @@ def solar_args():
         scales=load("swpc", "noaa-scales.json"),
         xray=load("swpc", "xrays-6-hour.json"),
         forecast_3day=(FIXTURES / "swpc" / "3-day-forecast.txt").read_text(encoding="ascii"),
+        daily_indices=(FIXTURES / "swpc" / "daily-solar-indices.txt").read_text(encoding="ascii"),
     )
 
 
@@ -169,7 +170,9 @@ WX_SHORT = WX_HEAD + (
     "THANKSGIVING DAY: Mostly cloudy, with a high near 46. Northeast wind\n"
     "  5 to 15 mph, with gusts as high as 30 mph.\n"
     "1. Full forecast (14 periods)\n"
-    "2. Alerts for this place\n") + SOURCE
+    "   WX Portland Head Light | FULL\n"
+    "2. Alerts for this place\n"
+    "   WX Portland Head Light | ALERTS\n") + SOURCE
 
 WX_FULL = WX_HEAD + (
     "TODAY: Mostly sunny, with a high near 43. East wind 0 to 5 mph.\n"
@@ -228,7 +231,9 @@ class WxExactTests(ReplyCase):
             "  to 20 mph, with gusts as high as 35 mph. Chance of precipitation is\n"
             "  100%.\n"
             "1. Full forecast (13 periods)\n"
-            "2. Alerts for this place\n") + SOURCE
+            "   WX Portland Head Light | FULL\n"
+            "2. Alerts for this place\n"
+            "   WX Portland Head Light | ALERTS\n") + SOURCE
         self.assertEqual(wx(now=now), expected)
 
     def test_period_ending_exactly_now_is_dropped(self):
@@ -267,7 +272,9 @@ class WxExactTests(ReplyCase):
                               "Zone MEZ024 near Portland ME\n"
                               "TODAY: Sunny.\n"
                               "1. Full forecast (1 period)\n"
-                              "2. Alerts for this place\n" + SOURCE)
+                              "   WX Here | FULL\n"
+                              "2. Alerts for this place\n"
+                              "   WX Here | ALERTS\n" + SOURCE)
 
     def test_period_order_is_kept_not_sorted(self):
         fc = mini_forecast(period("Tonight", "B.", number=2), period("Today", "A.", number=1))
@@ -278,6 +285,20 @@ class WxExactTests(ReplyCase):
         fc = mini_forecast(period("Today", "A.", end=None))
         out = format_wx(mini_points(), fc, place="Here", node=NODE, now=datetime(2100, 1, 1, tzinfo=UTC))
         self.assertIn("TODAY: A.\n", out)
+
+    def test_menu_commands_use_the_whole_place_and_wrap(self):
+        place = " ".join(["Plantation"] * 9)
+        out = format_wx(mini_points(), mini_forecast(period()), place=place, node=NODE, now=NOW)
+        self.assertReply(out)
+        lines = out.split("\n")
+        i = lines.index("   WX Plantation Plantation Plantation Plantation Plantation")
+        self.assertEqual(lines[i + 1], "   Plantation Plantation Plantation Plantation | FULL")
+        self.assertEqual(lines[i + 2], "2. Alerts for this place")
+        self.assertEqual(lines[i + 3], "   WX Plantation Plantation Plantation Plantation Plantation")
+        self.assertEqual(lines[i + 4], "   Plantation Plantation Plantation Plantation | ALERTS")
+        full = format_wx(mini_points(), mini_forecast(period()), place=place, node=NODE, now=NOW, full=True)
+        self.assertNotIn("| FULL", full)
+        self.assertNotIn("| ALERTS", full)
 
     def test_unknown_fields_are_ignored(self):
         out = format_wx(sprinkle(points()), sprinkle(forecast()), place=PLACE, node=NODE, now=NOW)
@@ -405,8 +426,8 @@ class WxPeriodTests(ReplyCase):
     def one(self, p):
         out = format_wx(mini_points(zone=None, city=None, state=None), mini_forecast(p),
                         place="Here", node=NODE, now=NOW)
-        # without the header, the two menu lines, the two source lines and the empty tail
-        return self.assertReply(out).split("\n")[1:-5]
+        # without the header, the four menu lines, the two source lines and the empty tail
+        return self.assertReply(out).split("\n")[1:-7]
 
     def test_name_is_upper_cased_and_cleaned(self):
         self.assertEqual(self.one(period("this\n afternoon", "Hot."))[0], "THIS AFTERNOON: Hot.")
@@ -1123,10 +1144,12 @@ class AlertsPlaceAndLimitTests(ReplyCase):
 
 SOLAR_EXPECTED = (
     "SOLAR 2026-11-25 0433Z (data age 12 min)\n"
-    "SFI 88  A 15  Kp 0 (3h max 3)\n"
+    "SFI 88  SSN 36  A 15  Kp 0 (3h max 3)\n"
     "X-ray B2.1  Storms now: R0 S0 G0\n"
     "Forecast: Kp up to 5 (G1) on Nov 27\n"
-    "Source: NOAA SWPC\n")
+    "Source: NOAA SWPC\n"
+    "Text is shortened or reformatted. Not official NWS text.\n")
+SOLAR_SRC = "Source: NOAA SWPC\nText is shortened or reformatted. Not official NWS text.\n"
 
 
 def solar(**kw):
@@ -1162,6 +1185,7 @@ class SolarExactTests(ReplyCase):
     def test_unknown_fields_are_ignored(self):
         args = {k: sprinkle(v) for k, v in solar_args().items() if not isinstance(v, str)}
         args["forecast_3day"] = solar_args()["forecast_3day"]
+        args["daily_indices"] = solar_args()["daily_indices"]
         self.assertEqual(format_solar(fetched_at=FETCHED, now=SOLAR_NOW, **args), SOLAR_EXPECTED)
 
     def test_inputs_are_not_changed(self):
@@ -1216,9 +1240,10 @@ class SolarAgeTests(ReplyCase):
 class SolarPartialTests(ReplyCase):
     def test_each_missing_product(self):
         cases = {
-            "flux": {1: "SFI n/a  A 15  Kp 0 (3h max 3)"},
-            "kp_3h": {1: "SFI 88  A n/a  Kp 0"},
-            "kp_1m": {1: "SFI 88  A 15  Kp n/a (3h max 3)"},
+            "flux": {1: "SFI n/a  SSN 36  A 15  Kp 0 (3h max 3)"},
+            "daily_indices": {1: "SFI 88  SSN n/a  A 15  Kp 0 (3h max 3)"},
+            "kp_3h": {1: "SFI 88  SSN 36  A n/a  Kp 0"},
+            "kp_1m": {1: "SFI 88  SSN 36  A 15  Kp n/a (3h max 3)"},
             "scales": {2: "X-ray B2.1  Storms now: n/a"},
             "xray": {2: "X-ray n/a  Storms now: R0 S0 G0"},
             "forecast_3day": {3: "Forecast: n/a"},
@@ -1233,12 +1258,12 @@ class SolarPartialTests(ReplyCase):
 
     def test_only_one_product(self):
         out = solar(flux=load("swpc", "10cm-flux.json"), kp_3h=None, kp_1m=None, scales=None,
-                    xray=None, forecast_3day=None)
+                    xray=None, forecast_3day=None, daily_indices=None)
         self.assertEqual(out, "SOLAR 2026-11-25 0433Z (data age 12 min)\n"
-                              "SFI 88  A n/a  Kp n/a\n"
+                              "SFI 88  SSN n/a  A n/a  Kp n/a\n"
                               "X-ray n/a  Storms now: n/a\n"
                               "Forecast: n/a\n"
-                              "Source: NOAA SWPC\n")
+                              + SOLAR_SRC)
 
     def test_all_missing_is_an_error(self):
         with self.assertRaises(WxFormatError):
@@ -1246,12 +1271,12 @@ class SolarPartialTests(ReplyCase):
 
     def test_empty_products_are_n_a_not_errors(self):
         out = format_solar(fetched_at=FETCHED, now=SOLAR_NOW, flux=[], kp_3h=[], kp_1m=[], scales={},
-                           xray=[], forecast_3day="")
+                           xray=[], forecast_3day="", daily_indices="")
         self.assertEqual(out, "SOLAR 2026-11-25 0433Z (data age 12 min)\n"
-                              "SFI n/a  A n/a  Kp n/a\n"
+                              "SFI n/a  SSN n/a  A n/a  Kp n/a\n"
                               "X-ray n/a  Storms now: n/a\n"
                               "Forecast: n/a\n"
-                              "Source: NOAA SWPC\n")
+                              + SOLAR_SRC)
 
     def test_shape_errors(self):
         for key in ("flux", "kp_3h", "kp_1m", "xray"):
@@ -1264,9 +1289,11 @@ class SolarPartialTests(ReplyCase):
                 with self.assertRaises(WxFormatError):
                     solar(scales=bad)
         for bad in (5, [], {}, b"text", True):
-            with self.subTest(forecast=bad):
+            with self.subTest(text=bad):
                 with self.assertRaises(WxFormatError):
                     solar(forecast_3day=bad)
+                with self.assertRaises(WxFormatError):
+                    solar(daily_indices=bad)
 
     def test_bad_times(self):
         for kw in ({"fetched_at": datetime(2026, 11, 25, 4, 21)}, {"now": datetime(2026, 11, 25, 4, 33)},
@@ -1285,14 +1312,15 @@ class SolarPartialTests(ReplyCase):
 
     def test_all_garbage_entries_give_n_a(self):
         junk = [None, 5, "x", [], {}]
-        out = solar(flux=junk, kp_3h=junk, kp_1m=junk, xray=junk, scales={"0": 5}, forecast_3day="junk")
-        self.assertEqual(lines_of(out)[1:4], ["SFI n/a  A n/a  Kp n/a", "X-ray n/a  Storms now: n/a",
+        out = solar(flux=junk, kp_3h=junk, kp_1m=junk, xray=junk, scales={"0": 5}, forecast_3day="junk",
+                    daily_indices="junk")
+        self.assertEqual(lines_of(out)[1:4], ["SFI n/a  SSN n/a  A n/a  Kp n/a", "X-ray n/a  Storms now: n/a",
                                               "Forecast: n/a"])
 
 
 class SolarValueTests(ReplyCase):
     def sfi(self, flux, tag="2026-11-24T20:00:00"):
-        return lines_of(solar(flux=[{"flux": flux, "time_tag": tag}]))[1].split("  A ")[0]
+        return lines_of(solar(flux=[{"flux": flux, "time_tag": tag}]))[1].split("  SSN ")[0]
 
     def test_sfi_formats(self):
         for value, text in ((88, "SFI 88"), (88.0, "SFI 88"), (88.46, "SFI 88.5"), (88.44, "SFI 88.4"),
@@ -1364,15 +1392,15 @@ class SolarValueTests(ReplyCase):
         self.assertIn("(3h max 6)", lines_of(out)[1])
         out = solar(kp_3h=[entries[0], entries[3]])
         self.assertNotIn("3h max", out)
-        self.assertEqual(lines_of(out)[1], "SFI 88  A 4  Kp 0")
+        self.assertEqual(lines_of(out)[1], "SFI 88  SSN 36  A 4  Kp 0")
 
     def test_three_hour_max_shows_a_decimal_when_needed(self):
         out = solar(kp_3h=[kp3("2026-11-25T00:00:00", 4.33)])
-        self.assertEqual(lines_of(out)[1], "SFI 88  A 4  Kp 0 (3h max 4.3)")
+        self.assertEqual(lines_of(out)[1], "SFI 88  SSN 36  A 4  Kp 0 (3h max 4.3)")
 
     def test_a_and_max_use_different_entries_when_needed(self):
         entries = [kp3("2026-11-25T00:00:00", "bad", 20), kp3("2026-11-24T21:00:00", 2.0, "bad")]
-        self.assertEqual(lines_of(solar(kp_3h=entries))[1], "SFI 88  A 20  Kp 0 (3h max 2)")
+        self.assertEqual(lines_of(solar(kp_3h=entries))[1], "SFI 88  SSN 36  A 20  Kp 0 (3h max 2)")
 
     def test_xray_uses_latest_in_the_long_band_only(self):
         entries = [xr("2026-11-25T04:10:00Z", 1.25e-7), xr("2026-11-25T04:20:00Z", 5.75e-5),
@@ -1402,6 +1430,73 @@ class SolarValueTests(ReplyCase):
         out = solar(xray=entries)
         self.assertLess(time.perf_counter() - t0, 5)
         self.assertReply(out)
+
+
+def dsd(*rows):
+    """A daily-indices text with the given data lines (date, flux, ssn)."""
+    head = ":Product: Daily Solar Data            DSD.txt\n#  Date     10.7cm Number  Hemis.\n#-----\n"
+    return head + "".join("%s  %s     %s      170      1    -999      *   0  0  0  0  0  0  0\n" % r for r in rows)
+
+
+class SolarSsnTests(ReplyCase):
+    def ssn(self, text):
+        line = lines_of(self.assertReply(solar(daily_indices=text)))[1]
+        return line.split("  SSN ")[1].split("  A ")[0]
+
+    def test_fixture_uses_the_latest_date(self):
+        self.assertEqual(self.ssn(solar_args()["daily_indices"]), "36")
+
+    def test_line_order_is_not_trusted(self):
+        rows = [("2026 11 22", 94, 23), ("2026 11 24", 88, 36), ("2026 11 23", 90, 23)]
+        self.assertEqual(self.ssn(dsd(*rows)), "36")
+        self.assertEqual(self.ssn(dsd(*reversed(rows))), "36")
+
+    def test_same_date_later_line_wins(self):
+        self.assertEqual(self.ssn(dsd(("2026 11 24", 88, 36), ("2026 11 24", 88, 40))), "40")
+
+    def test_values(self):
+        for value in (0, 1, 148, 999):
+            with self.subTest(value=value):
+                self.assertEqual(self.ssn(dsd(("2026 11 24", 88, value))), str(value))
+
+    def test_unusable_latest_line_falls_back_to_the_previous_one(self):
+        for bad in (-999, -1, 1000, 12345):
+            with self.subTest(bad=bad):
+                self.assertEqual(self.ssn(dsd(("2026 11 23", 90, 23), ("2026 11 24", 88, bad))), "23")
+        self.assertEqual(self.ssn(dsd(("2026 11 24", 88, -999))), "n/a")
+
+    def test_second_column_after_the_date_is_the_sunspot_number(self):
+        self.assertEqual(self.ssn("2026 11 24  150  7  1  2\n"), "7")
+
+    def test_lines_that_are_not_data_are_ignored(self):
+        text = (":Issued: 2026 11 30\n# 2026 11 30   99  99\n"
+                "2026 11 30\n"                    # no columns
+                "2026 11 30  88\n"                # one column
+                "2026 11 30  88  3.5  x\n"        # not an integer
+                "2026 11 30  88  x\n"
+                "2026-11-30  88  77\n"            # other date form
+                " 2026 11 30  88  77\n"           # indented
+                "2026 13 30  88  77\n"            # not a date
+                "2026 02 30  88  77\n"
+                "2026 11 24  88  36\n")
+        self.assertEqual(self.ssn(text), "36")
+
+    def test_crlf_and_trailing_spaces(self):
+        self.assertEqual(self.ssn(dsd(("2026 11 24", 88, 36)).replace("\n", "  \r\n")), "36")
+
+    def test_no_data_lines(self):
+        for text in ("", "\n\n", ":Product: Daily Solar Data\n#\n", "no numbers here"):
+            with self.subTest(text=text):
+                self.assertEqual(self.ssn(text), "n/a")
+
+    def test_hostile_text(self):
+        for h in HOSTILE:
+            with self.subTest(h=h[:20]):
+                self.assertEqual(self.ssn(h + "\n" + h), "n/a")
+        t0 = time.perf_counter()
+        rows = [("2026 11 24", 88, i % 900) for i in range(200_000)]
+        self.assertEqual(self.ssn(dsd(*rows)), str(199_999 % 900))
+        self.assertLess(time.perf_counter() - t0, 5)
 
 
 class SolarScalesTests(ReplyCase):
@@ -1531,7 +1626,8 @@ class SolarHostileTests(ReplyCase):
                                        forecast_3day=h))
 
     def test_source_line_is_fixed(self):
-        self.assertTrue(solar().endswith("\nSource: NOAA SWPC\n"))
+        self.assertTrue(solar().endswith("\n" + SOLAR_SRC))
+        self.assertTrue(solar(flux=load("swpc", "10cm-flux.json")).endswith("\n" + SOLAR_SRC))
 
 
 # ------------------------------------------------------------- xray_class

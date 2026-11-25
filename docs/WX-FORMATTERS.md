@@ -44,7 +44,8 @@ format_solar(*, fetched_at: datetime, now: datetime,
              flux: list | None = None, kp_3h: list | None = None,
              kp_1m: list | None = None, scales: dict | None = None,
              xray: list | None = None,
-             forecast_3day: str | None = None) -> str
+             forecast_3day: str | None = None,
+             daily_indices: str | None = None) -> str
 format_nws_error(service: str, problem: dict | None, *, place: str,
                  node: str, cached: str | None = None,
                  cached_at: datetime | None = None,
@@ -120,7 +121,8 @@ robot can also use as a command argument (`Waterboro ME`, `43.6,-70.7`,
 
     The NWS disclaimer forbids presenting modified content as official
     (<https://www.weather.gov/disclaimer>), and the design asks for
-    `Source: NWS via <node>`. SOLAR ends with `Source: NOAA SWPC`.
+    `Source: NWS via <node>`. SOLAR ends with `Source: NOAA SWPC` and the
+    same second line (SWPC is part of the NWS, so the disclaimer applies).
 
 ## WX: `format_wx`
 
@@ -162,7 +164,9 @@ TONIGHT: Mostly cloudy, with a low around 26. North wind 0 to 5 mph.
 THANKSGIVING DAY: Mostly cloudy, with a high near 46. Northeast wind
   5 to 15 mph, with gusts as high as 30 mph.
 1. Full forecast (14 periods)
+   WX Portland Head Light | FULL
 2. Alerts for this place
+   WX Portland Head Light | ALERTS
 Source: NWS via fcms.example.net
 Text is shortened or reformatted. Not official NWS text.
 ```
@@ -176,11 +180,14 @@ Text is shortened or reformatted. Not official NWS text.
    `{NAME}: {text}`, wrapped with a two-space continuation indent.
 4. Menu: `1. Full forecast (N periods)` where N is the number of current
    periods (`1 period` when N is 1), then `2. Alerts for this place`.
-   The menu code and the commands are the menu layer's business, not
-   this module's.
+   Every option is also a command (design, Menus), printed under the
+   option with a three-space indent: `WX {place} | FULL` and
+   `WX {place} | ALERTS`, with the clean place (never shortened), wrapped
+   with a three-space continuation indent. The menu code and footer are
+   the menu layer's business, not this module's.
 5. Attribution (rule 10).
 
-`full=True` is the same without the menu: header, zone line, every
+`full=True` is the same without the menu and its commands: header, zone line, every
 current period, attribution.
 
 ## ALERTS: `format_alerts` and `format_alert_full`
@@ -313,35 +320,38 @@ the parsed JSON lists, `scales` the parsed JSON object, and
 | `scales` | `products/noaa-scales.json` | `noaa-scales.json` |
 | `xray` | `json/goes/primary/xrays-6-hour.json` | `xrays-6-hour.json` |
 | `forecast_3day` | `text/3-day-forecast.txt` | `3-day-forecast.txt` |
+| `daily_indices` | `text/daily-solar-indices.txt` | `daily-solar-indices.txt` |
 
 `fetched_at` is when the products were fetched (the oldest, when they
 were fetched at different times). `now` is the time of the reply.
 
 ```text
 SOLAR 2026-11-25 0433Z (data age 12 min)
-SFI 88  A 15  Kp 0 (3h max 3)
+SFI 88  SSN 36  A 15  Kp 0 (3h max 3)
 X-ray B2.1  Storms now: R0 S0 G0
 Forecast: Kp up to 5 (G1) on Nov 27
 Source: NOAA SWPC
+Text is shortened or reformatted. Not official NWS text.
 ```
 
 1. Line 1: `SOLAR {Z-stamp of now} (data age {age of fetched_at})`, rule 7.
-2. Line 2: `SFI {sfi}  A {a}  Kp {kp}` and, when there is a 3-hour maximum,
+2. Line 2: `SFI {sfi}  SSN {ssn}  A {a}  Kp {kp}` and, when there is a 3-hour maximum,
    ` (3h max {max})`. Two spaces between the fields.
 3. Line 3: `X-ray {class}  Storms now: {R} {S} {G}`.
 4. Line 4: the forecast line.
-5. Line 5: `Source: NOAA SWPC`.
+5. Lines 5 and 6: the attribution (rule 10).
 
-**Partial data.** The five lines are always there, so a client or a
+**Partial data.** The first five lines are always there, so a client or a
 person can read them by position. A product that is `None`, or has no
-usable entry, makes its field `n/a`: `SFI n/a`, `A n/a`, `Kp n/a`,
+usable entry, makes its field `n/a`: `SFI n/a`, `SSN n/a`, `A n/a`, `Kp n/a`,
 `X-ray n/a`, `Storms now: n/a`, `Forecast: n/a`. The `(3h max ...)`
-part is left out when there is none. All six arguments `None` raises
+part is left out when there is none. All seven products `None` raises
 `WxFormatError` (nothing to report). With no products usable, line 2 is
-`SFI n/a  A n/a  Kp n/a`.
+`SFI n/a  SSN n/a  A n/a  Kp n/a`.
 
 **Shape errors.** A list product that is not a list, `scales` that is
-not an object, or `forecast_3day` that is not a string raises
+not an object, or `forecast_3day` or `daily_indices` that is not a
+string raises
 `WxFormatError`. Inside a list, an entry that is not an object, or lacks
 a usable value or `time_tag`, is skipped. Skipping is silent, and if no
 entry is usable the field is `n/a`.
@@ -364,6 +374,21 @@ still counts for the 3-hour maximum, but not for `A`; and the reverse.
 *Kp text* is the value rounded half up to one decimal from its shortest
 `repr` (so `2.67` gives `2.7` and `0.05` gives `0.1`), with a trailing
 `.0` removed (`3.00` gives `3`, `0.0` gives `0`).
+
+**Sunspot number.** From `daily_indices` (the Daily Solar Data text).
+A data line starts in column 0 with a date `YYYY MM DD` (a real calendar
+date), then whitespace, then at least two whole integers separated by
+whitespace and followed by whitespace or the end of the line: the 10.7 cm
+radio flux, then the SESC sunspot number, which is the one used. Lines
+that do not match (the `:` and `#` header lines, `2026-11-30`, an
+indented date, `3.5`) are ignored. A line is usable when its sunspot
+number is `0 <= v <= 999` (the file's missing value is `-999`). The line
+with the latest date is used, the later one in the file on a tie; when it
+is not usable, the next latest usable line is. The number is shown as an
+integer. The fixture's latest line is 2026 11 24, sunspot number 36.
+`\r\n` line endings and trailing spaces are accepted. No usable line
+gives `SSN n/a`. The file's header says the product is `DSD.txt`, "Last
+30 Days Daily Solar Data".
 
 **X-ray class.** SWPC classifies flares by peak flux in the 0.1 to 0.8 nm
 band: "A" starts nominally at 1e-8 W/m2, "B" at 1e-7, "C" at 1e-6, "M" at
@@ -456,10 +481,13 @@ changes for the maintainer to confirm:
   every alert, and a state-wide area can return dozens.
 - **Alert description** drops the `* ` bullets of NWS text in the short
   reply, so a bullet does not end a line alone.
-- **WX menu** has no command lines, as in the design's layout. The ALERTS
-  menu prints its command lines, as the design says. The menu layer
-  (not here) should decide whether the two are made alike.
-- **SSN** is left out of SOLAR (see below).
+- **WX menu** prints its command lines under the options, as the ALERTS
+  menu does; the design's WX layout showed the options only.
+- **SOLAR attribution** has the second "not official" line too, as WX
+  and ALERTS do.
+- **SSN** comes from a seventh product, `text/daily-solar-indices.txt`,
+  which is not in the design's product table. The sysop's fetcher must
+  add it to the SOLAR fetch list.
 
 ## Fixtures
 
@@ -476,6 +504,3 @@ tests derive from them by the rules above.
 - The menu code, the menu footer and `MORE`, which belong to the menu
   layer.
 - Fetching, caching, rate limits and the cached forecast's storage.
-- A `SSN` figure. The design example shows one, but none of its
-  products carries the current sunspot number (the daily indices text
-  file does). Not in the layout until the design names a product.

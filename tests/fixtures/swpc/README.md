@@ -13,5 +13,6 @@ Center (`https://services.swpc.noaa.gov/`), fetched 2026-11-25 about
 | `noaa-scales.json` | `products/noaa-scales.json` | none |
 | `xrays-6-hour.json` | `json/goes/primary/xrays-6-hour.json` | last 40 of the 716 entries (04:11 to 04:30, both bands), one entry per line |
 | `3-day-forecast.txt` | `text/3-day-forecast.txt` | none |
+| `daily-solar-indices.txt` | `text/daily-solar-indices.txt` (issued 0225 UT 25 Nov 2026) | the 13 header lines are kept; of the 30 daily data lines only the last 6 (2026-11-19 to 2026-11-24) |
 
 Lists are rewritten with one entry per line, which changes layout only.
