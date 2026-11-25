@@ -8,6 +8,7 @@ version = "0.1.0.dev0"
 description = "Research prototype for a self-hostable Federated CMS core"
 requires-python = ">=3.11"
 license = {text = "MIT"}
+dependencies = ["anyascii>=0.3.2,<0.4"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

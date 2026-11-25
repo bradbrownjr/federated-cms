@@ -1,0 +1,45 @@
+Expires:202611251500;;881204
+FPUS51 KGYX 250049
+ZFPGYX
+
+Zone Forecasts for New Hampshire and western Maine
+National Weather Service Gray ME
+749 PM EST Tue Nov 24 2026
+
+
+MEZ023-251500-
+Coastal York-
+Including the cities of Biddeford, Saco, Old Orchard Beach, 
+and Kittery
+749 PM EST Tue Nov 24 2026
+
+.TONIGHT...Clear. Lows in the lower 20s. Light and variable winds. 
+.WEDNESDAY...Mostly sunny. Highs in the mid 40s. Light and variable
+winds. 
+.WEDNESDAY NIGHT...Partly cloudy. Lows in the lower 20s. Light and
+variable winds. 
+.THANKSGIVING DAY...Partly sunny in the morning, then mostly cloudy
+with a chance of rain in the afternoon. Highs in the mid 40s.
+Northeast winds around 10 mph. Gusts up to 25 mph in the afternoon.
+Chance of rain 50 percent. 
+.THURSDAY NIGHT...Rain. Lows in the lower 40s. Northeast winds 10 to
+15 mph with gusts up to 30 mph. Chance of rain near 100 percent. 
+.FRIDAY...Rain. Highs in the mid 50s. Chance of rain near
+100 percent. 
+.FRIDAY NIGHT...Mostly cloudy with a 50 percent chance of rain. Lows
+in the mid 30s. 
+.SATURDAY...Partly sunny. A chance of rain in the morning. Highs in
+the lower 50s. Chance of rain 30 percent. 
+.SATURDAY NIGHT...Partly cloudy. Lows in the mid 30s. 
+.SUNDAY...Partly sunny. Highs in the mid 50s. 
+.SUNDAY NIGHT...Partly cloudy. Lows in the mid 30s. 
+.MONDAY...Partly sunny with a 50 percent chance of rain. Highs in
+the mid 50s. 
+.MONDAY NIGHT...Partly cloudy with a chance of rain in the evening,
+then mostly clear after midnight. Lows in the lower 30s. Chance of
+rain 40 percent. 
+.TUESDAY...Partly sunny. Highs in the upper 40s. 
+
+$$
+
+
