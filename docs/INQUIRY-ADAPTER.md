@@ -247,6 +247,10 @@ The native layer's address: `FCMS` unless the sysop sets another. Tests:
 `tests/test_inquiry.py`, classes `ServiceAddressTests` and
 `NativeCommandTests`.
 
+The implementation changes `src/federated_cms/inquiry.py` (the names
+below) and `src/federated_cms/menu_reply.py` (its `address` argument,
+[MENU-REPLY.md](MENU-REPLY.md#api)) and no other file.
+
 ```python
 DEFAULT_SERVICE_ADDRESS = "FCMS"
 RESERVED_ADDRESSES = frozenset({"INQUIRY", "QTH", "SERVICE", "SYSTEM", "OPTIONS", "POSTMASTER", "MAILER-DAEMON"})
