@@ -61,6 +61,10 @@ Winlink Express can use to collect BBS mail
 - Present our server as Winlink. It identifies itself as `FCMS`, uses its own
   addresses and domains, and does not use `winlink.org` addresses as its own.
 - Use anyone else's credentials, accounts or captured traffic.
+- Use another program's SID name, or anything else, to get past the
+  production CMS's check on client programs. A program reaches Winlink's
+  production servers only once Winlink recognises it
+  ([kissterm findings](KISSTERM-B2F-FINDINGS.md#access-to-winlinks-own-servers)).
 
 ## Winlink Express licence
 

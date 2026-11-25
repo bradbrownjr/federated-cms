@@ -7,6 +7,14 @@ clients and gateway build below; deployment compatibility remains under investig
 
 Can an existing Winlink-compatible client exchange B2F messages with an independently operated CMS through existing radio access equipment, without using the production Winlink CMS?
 
+## Access to Winlink's servers
+
+Winlink's production CMS accepts only client programs it recognises by the
+name in their SID, directly or through an RMS gateway; its test server
+accepts others, and its API needs an access key issued by a Winlink
+administrator. Details and dates: [kissterm findings](KISSTERM-B2F-FINDINGS.md#access-to-winlinks-own-servers).
+A Federated CMS node runs no such check on its own clients.
+
 ## Separate interfaces
 
 1. **Client ↔ RMS / radio access:** documented B2F/B2 message exchange, session negotiation, compression, authentication challenge, attachment and address handling. Preserve ordinary clients and RF modems.
