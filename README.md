@@ -13,6 +13,8 @@ Federated CMS investigates a decentralized, self-hostable messaging and informat
 
 CMS is used here descriptively for **Common Message Server**; this project is independent of Winlink and is not affiliated with or endorsed by its operators. Compatibility is a research goal, not an existing feature.
 
+No Winlink software has been decompiled or disassembled for this project. It is built from published specifications, open-source programs and black-box testing of unmodified clients against our own server. See [how Federated CMS works with Winlink software](docs/INDEPENDENT-IMPLEMENTATION.md).
+
 ## Principles
 
 - Individuals, clubs, and regions can run autonomous nodes.
@@ -29,6 +31,7 @@ CMS is used here descriptively for **Common Message Server**; this project is in
 
 - [Research roadmap](ROADMAP.md)
 - [Scope and interoperability charter](docs/SCOPE.md)
+- [How Federated CMS works with Winlink software](docs/INDEPENDENT-IMPLEMENTATION.md)
 - [Architecture RFC 0001](docs/ARCHITECTURE-RFC-0001.md)
 - [B2F interoperability investigation](docs/WINLINK-INTEROPERABILITY.md)
 - [kissterm interoperability findings](docs/KISSTERM-B2F-FINDINGS.md)
