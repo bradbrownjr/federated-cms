@@ -7,17 +7,17 @@ Federated CMS is a self-hosted mail and information server for amateur radio.
 - **Operator-controlled nodes.** Clubs, regions and individual operators run their own. Each node fetches web pages, weather and feeds directly, so requests don't depend on one central service being up. The node's licensee decides what it offers, within their country's amateur rules.
 - **Bring your client.** Any program that speaks the published B2F protocol can connect, and accounts are by callsign.
 - **Bring your modem.** B2F runs over any link that carries a reliable byte stream.
-- **Reuse what you have.** BPQ, packet applications and Reticulum services plug in as information sources.
+- **Reuse what you have.** BPQ, packet applications and Reticulum services are planned information sources.
 
 ## Why
 
-- **Client choice.** Winlink's production servers accept only client programs they recognise. [kissterm](https://github.com/bradbrownjr/kissterm), an independent B2F client, is answered "Unknown client types are not allowed on production servers -- use cms-z.winlink.org", over the Internet and through an RMS gateway alike; the test server accepts it ([kissterm roadmap](https://github.com/bradbrownjr/kissterm/blob/main/docs/ROADMAP.md)).
+- **Client choice.** Winlink's production servers accept only client programs they recognise. kissterm, an independent B2F client, is answered "Unknown client types are not allowed on production servers -- use cms-z.winlink.org", over the Internet and through an RMS gateway alike; the test server accepts it ([kissterm roadmap](https://github.com/bradbrownjr/kissterm/blob/main/docs/ROADMAP.md)).
 - **Modem choice.** Winlink clients and gateways support a fixed set of modes: PACTOR, ARDOP, VARA and packet, plus Telnet. New modems keep appearing, and a self-hosted node can carry B2F over any of them.
 - **Independence.** Winlink's gateway software requires "a full-time Internet connection" ([Winlink sysop software](https://winlink.org/node/21)). A node that fetches its own information keeps working when a central service or its hosting provider is down.
 
 ## M1 local prototype
 
-The repository now includes a local SQLite-backed CMS core and an ASCII-only BPQ
+The repository includes a local SQLite-backed CMS core and an ASCII-only BPQ
 terminal bridge for the first M1 increment. It is intentionally not federation
 or a production B2F server. A separate loopback-only B2F laboratory exchanges
 synthetic messages with an isolated test mailbox. See [development setup and BPQ examples](docs/DEVELOPMENT.md).
@@ -60,7 +60,6 @@ No Winlink software has been decompiled or disassembled for this project. It is 
 ## Related projects
 
 - [kissterm](https://github.com/bradbrownjr/kissterm): independent packet-radio mail client and terminal with an existing B2F implementation and documented experimental-CMS interoperability tests; useful as a reference client and test harness, not a Federated CMS component.
-
 - [bpq-apps](https://github.com/bradbrownjr/bpq-apps): packet-radio information applications and topology utilities.
 - [rns-apps](https://github.com/bradbrownjr/rns-apps): Reticulum/NomadNet applications and node discovery.
 
