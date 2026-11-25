@@ -6,7 +6,7 @@ its result into the document it names and delete it here.
 
 ## Open
 
-### 1. Express over RF against the lab server, no relay
+### Express over RF against the lab server, no relay
 
 **Why:** the server sends its own identifier, `[FCMS-0.1-B2FWHM$]`.
 This checks that Express accepts it directly over RF.
@@ -23,8 +23,7 @@ password in Express can also change it on the real Winlink account, and
 a separate local profile is not assumed to prevent that. Use an
 independently configured test client with disposable credentials, and
 confirm it is isolated from real account updates before entering them.
-If that cannot be confirmed, do not run this test; test 2 does not need
-it.
+If that cannot be confirmed, do not run this test.
 
 Steps 1 to 4 and 7 run on the lab host. The operator keeps control of
 both transmitters.
@@ -68,30 +67,6 @@ both transmitters.
 
 **Result goes to:** the Express rows of
 [WINLINK-INTEROPERABILITY.md](WINLINK-INTEROPERABILITY.md).
-
-### 2. What Express sends when you reply to a SERVICE message
-
-**Why:** interactive services send a menu and you reply with a number.
-The server has to find your choice in the reply, so we need to know
-exactly what Express puts in one. No radio needed.
-
-1. In Express, open an earlier `INQUIRY - ...` reply from `SERVICE`.
-2. Press Reply. Note any dialog or option about including the original
-   message, and what you choose.
-3. Type `2` as the only text above anything Express adds. Do not change
-   the subject.
-4. Post it to the Outbox. **Do not send it**; delete it from the Outbox
-   after step 5 so it does not go out on the next connection.
-5. Copy the newest `.mime` file from `C:\RMS Express\<CALL>\Messages\`
-   (sort by date; the folder is the one described in
-   [INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md)). If the Outbox copy is not there, say so.
-
-**Report:** the `.mime` file content (headers and body). Remove any
-password or unrelated personal details first. Also the subject line
-exactly as Express shows it, and the reply option you chose in step 2.
-
-**Result goes to:** "Reading a reply" in
-`docs/INTERACTIVE-SERVICES.md`.
 
 ## Later (not ready yet)
 
