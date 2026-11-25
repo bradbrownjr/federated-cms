@@ -10,6 +10,8 @@ import re
 class InquiryItem:
     kind: str
     value: str
+    arguments: str = ""
+    choice: str | None = None
 
 
 @dataclass(frozen=True)
@@ -107,7 +109,37 @@ def service_for(address: str) -> str | None:
     return local if local in ("INQUIRY", "QTH") else None
 
 
-def parse_inquiry(subject: str, body: str) -> InquiryRequest:
+def _validate_services(services: set[str] | frozenset[str]) -> None:
+    """Reject invalid service configuration before examining the request."""
+    if not isinstance(services, (set, frozenset)):
+        raise TypeError("services must be a set")
+    for verb in services:
+        if not isinstance(verb, str):
+            raise TypeError("service verb must be a string")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_-]{0,31}", verb) or verb in {"LIST", "UPDATE_CAT"}:
+            raise ValueError("invalid service verb")
+
+
+def _service_item(value: str, verb: str) -> tuple[InquiryItem | None, str]:
+    """Parse a recognized service line and return its first error, if any."""
+    if not value.isascii() or any(_control(char) for char in value):
+        return None, "invalid characters"
+    arguments, separator, choice = value[len(verb):].partition("|")
+    arguments = " ".join(arguments.split())
+    choice = " ".join(choice.split())
+    if len(arguments) > 200:
+        return None, "arguments too long"
+    if "|" in choice:
+        return None, "multiple choices"
+    if separator and not choice:
+        return None, "empty choice"
+    if len(choice) > 80:
+        return None, "choice too long"
+    return InquiryItem("service", verb, arguments, choice if separator else None), ""
+
+
+def parse_inquiry(subject: str, body: str, *, services: frozenset[str] = frozenset()) -> InquiryRequest:
+    _validate_services(services)
     body = _check_body(body, InquiryError)
     if not subject.isascii() or _upper(subject.strip()) not in ("REQUEST", "//WL2K REQUEST"):
         raise InquiryError("invalid subject")
@@ -119,7 +151,12 @@ def parse_inquiry(subject: str, body: str) -> InquiryRequest:
         if not value:
             continue
         upper = _upper(value)
-        if not value.isascii() or any(_control(char) for char in value):
+        verb = re.split(r"[ \t|]", value, maxsplit=1)[0]
+        verb = _upper(verb)
+        reason = "invalid item"
+        if verb in services:
+            item, reason = _service_item(value, verb)
+        elif not value.isascii() or any(_control(char) for char in value):
             item = None
         elif upper == "LIST":
             item = InquiryItem("list", upper)
@@ -133,7 +170,7 @@ def parse_inquiry(subject: str, body: str) -> InquiryRequest:
             item = None
         if item is None:
             shown = "".join("?" if _control(char) else char for char in value[:80])
-            rejected.append(RejectedLine(number, shown, "invalid item"))
+            rejected.append(RejectedLine(number, shown, reason))
         elif item not in seen:
             if len(items) == 32:
                 rejected.append(RejectedLine(number, value[:80], "too many items"))
