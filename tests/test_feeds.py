@@ -480,3 +480,137 @@ def test_parse_date(value, expected):
 @pytest.mark.parametrize("value", ["", "   ", "yesterday", "Tue, 99 Foo 2026", "2026-13-45T99:00:00Z"])
 def test_parse_date_unreadable(value):
     assert parse_date(value) is None
+
+
+# ------------------------------------------------- link, date and title hardening
+
+BAD_LINKS = [
+    "http://[::1",                    # urlsplit raises ValueError
+    "http://example.org/x&#x09;y",    # tab
+    "http://example.org/&#x0a;z",     # newline
+    "http://example.org/a&#x0d;b",    # carriage return
+    "http://example.org/a&#x7f;b",    # DEL
+    "http://example.org/a b",         # space
+    "http://example.org/a&#x85;b",    # NEL, str.isspace
+    "http://example.org/a&#xa0;b",    # no-break space, str.isspace
+    "http://nasa.gov@evil.example/",  # user name
+    "http://user:pw@evil.example/",   # user name and password
+    "http://:pw@evil.example/",       # password only
+    "http://@/",                      # empty host
+    "http:///path",                   # empty host
+]
+
+
+@pytest.mark.parametrize("bad", BAD_LINKS)
+def test_rss_bad_link_is_none(bad):
+    item = one(rss(f"<item><title>A</title><link>{bad}</link></item>"))
+    assert item.link is None
+    assert item.title == "A"
+
+
+@pytest.mark.parametrize("bad", BAD_LINKS)
+def test_rss_bad_guid_is_not_a_link(bad):
+    item = one(rss(f"<item><title>A</title><guid>{bad}</guid></item>"))
+    assert item.link is None
+
+
+@pytest.mark.parametrize("bad", BAD_LINKS)
+def test_atom_bad_href_is_none(bad):
+    item = one(atom(f'<entry><title>A</title><link href="{bad}"/></entry>'))
+    assert item.link is None
+
+
+def test_bad_item_link_does_not_fail_feed():
+    feed = parse_feed(rss(
+        "<item><title>A</title><link>https://example.org/a</link></item>"
+        "<item><title>B</title><link>http://[::1</link></item>"
+        "<item><title>C</title><guid>http://[::1</guid></item>"
+        "<item><title>D</title><link>https://example.org/d</link></item>"
+    ), url=URL)
+    assert [(i.title, i.link) for i in feed.items] == [
+        ("A", "https://example.org/a"), ("B", None), ("C", None),
+        ("D", "https://example.org/d")]
+
+
+def test_bad_feed_link_does_not_fail_feed():
+    feed = parse_feed(rss("", channel="<title>T</title><link>http://[::1</link>"), url=URL)
+    assert feed.title == "T" and feed.link is None
+    feed = parse_feed(atom("", head='<title>T</title><link href="http://[::1"/>'), url=URL)
+    assert feed.title == "T" and feed.link is None
+
+
+def test_good_links_still_accepted():
+    feed = parse_feed(rss(
+        "<item><title>A</title><link>  https://example.org/a  </link></item>"
+        "<item><title>B</title><link>//cdn.example.net/b</link></item>"
+        "<item><title>C</title><guid>  https://example.org/c  </guid></item>"
+    ), url=URL)
+    assert [i.link for i in feed.items] == [
+        "https://example.org/a", "https://cdn.example.net/b", "https://example.org/c"]
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("2003-12-13t18:30:02z", utc(2003, 12, 13, 18, 30, 2)),
+    ("2003-12-13T18:30:02z", utc(2003, 12, 13, 18, 30, 2)),
+    ("2003-12-13t18:30:02Z", utc(2003, 12, 13, 18, 30, 2)),
+    ("2026-11-24t14:48:00-09:00", utc(2026, 11, 24, 23, 48)),
+])
+def test_parse_date_lowercase_t_and_z(value, expected):
+    assert parse_date(value) == expected
+
+
+def test_atom_html_title_drops_script_and_style():
+    item = one(atom(
+        '<entry><title type="html">&lt;script&gt;evil()&lt;/script&gt;Snow'
+        ' &lt;style&gt;b{color:red}&lt;/style&gt;today</title></entry>'))
+    assert item.title == "Snow today"
+
+
+def test_atom_xhtml_title_drops_script_and_style():
+    xhtml = 'xmlns:h="http://www.w3.org/1999/xhtml"'
+    item = one(atom(
+        f'<entry><title type="xhtml"><h:div {xhtml}><h:script>evil()</h:script>Snow '
+        "<h:style>b{color:red}</h:style>today</h:div></title></entry>"))
+    assert item.title == "Snow today"
+
+
+def test_atom_link_rel_iri_and_attribute_whitespace():
+    iri = "http://www.iana.org/assignments/relation/alternate"
+    assert one(atom(
+        f'<entry><title>A</title><link rel="{iri}" href="https://example.org/a"/></entry>'
+    )).link == "https://example.org/a"
+    assert one(atom(
+        '<entry><title>A</title><link rel=" Alternate " href="https://example.org/a"/></entry>'
+    )).link == "https://example.org/a"
+    assert one(atom(
+        "<entry><title>A</title>"
+        '<link rel="alternate" type="application/json" href="https://example.org/json"/>'
+        '<link rel="alternate" type=" TEXT/HTML " href="https://example.org/page"/>'
+        "</entry>")).link == "https://example.org/page"
+
+
+@pytest.mark.parametrize("data", [
+    rss("<item><title>A</title></item>").decode(),
+    None,
+    123,
+    [60, 114],
+])
+def test_non_bytes_data_refused(data):
+    with pytest.raises(FeedError):
+        parse_feed(data, url=URL)
+
+
+@pytest.mark.parametrize("wrap", [bytes, bytearray, memoryview])
+def test_bytes_like_data_accepted(wrap):
+    data = wrap(rss("<item><title>A</title></item>"))
+    assert parse_feed(data, url=URL).items[0].title == "A"
+
+
+def test_nesting_limit_is_exactly_100():
+    def doc(total: int) -> bytes:
+        inner = total - 2  # rss and channel
+        return ("<rss><channel>" + "<x>" * inner + "</x>" * inner
+                + "</channel></rss>").encode()
+    assert parse_feed(doc(100), url=URL).kind == "rss"
+    with pytest.raises(FeedError):
+        parse_feed(doc(101), url=URL)

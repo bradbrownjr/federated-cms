@@ -51,17 +51,19 @@ it.
 **Safety.** Every check raises `FeedError`; no other exception type
 escapes for any input.
 
-1. `len(data) > max_bytes`. The caller applies the same limit while
+1. `data` that is not `bytes`, `bytearray` or `memoryview`.
+2. `len(data) > max_bytes`. The caller applies the same limit while
    decompressing, before calling.
-2. Any document type declaration (`<!DOCTYPE`), wherever it is and in
+3. Any document type declaration (`<!DOCTYPE`), wherever it is and in
    any encoding. Feeds have no need for one, and refusing it blocks
    entity expansion and external entities whatever the installed Expat
    version. Python's XML documentation says Expat below 2.7.2 may be
    vulnerable to entity expansion
    (<https://docs.python.org/3/library/xml.html#xml-vulnerabilities>).
-3. Malformed XML, including an undefined entity such as `&nbsp;`.
-4. More than 100 nested elements.
-5. A root element that is not `rss` (no namespace) or Atom `feed`.
+4. Malformed XML, including an undefined entity such as `&nbsp;`.
+5. More than 100 nested elements, counting the root: 100 levels
+   parse, 101 raise.
+6. A root element that is not `rss` (no namespace) or Atom `feed`.
    RSS 1.0 (`rdf:RDF`) is refused in this version.
 
 Implement with `xml.parsers.expat` and namespace processing, failing in
@@ -95,8 +97,20 @@ of whitespace (as `str.split` sees it, so no-break spaces too) collapsed
 to one space. Every value has surrounding
 whitespace removed, and an empty value means the field is `None`.
 
-**Links** resolve against `url` (`urllib.parse.urljoin`). A result whose
-scheme is not `http` or `https` is `None`. `xml:base` is not used.
+**Links.** Every link (channel, item, RSS `guid` fallback, Atom
+`href`) goes through the same rule, and a link that fails it is `None`:
+
+1. Surrounding whitespace removed; empty gives `None`.
+2. A value still containing any C0 control (U+0000 to U+001F), DEL
+   (U+007F) or whitespace (as `str.isspace` sees it) is `None`.
+3. Resolved against `url` (`urllib.parse.urljoin`), so a
+   scheme-relative `//host/path` takes the scheme of `url`. An error
+   from `urljoin` or `urlsplit` (such as `http://[::1`) gives `None`.
+4. The result must have scheme `http` or `https`, a non-empty host
+   name, and no user information (user name or password).
+
+A bad link never fails the feed; the item keeps its other fields.
+`xml:base` is not used.
 
 #### RSS (`<rss>`, any `version`)
 
@@ -104,8 +118,9 @@ The `channel` child gives `title` and `link`. Each `item` child of the
 channel:
 
 - `title`: `title`.
-- `link`: `link`; when there is none, `guid` when it is an absolute
-  http or https URL and its `isPermaLink` attribute is not `false`.
+- `link`: `link`; when there is none, `guid` when its `isPermaLink`
+  attribute is not `false` and it passes the link rule as an absolute
+  URL (a relative `guid` is not resolved).
 - `id`: `guid`.
 - `published`: `pubDate` through `parse_date`; when that is missing or
   unreadable, `dc:date`.
@@ -120,8 +135,10 @@ A `channel` missing is a `FeedError`.
 The feed's `title` and `link`, and for each `entry`:
 
 - `title`: a text construct (below), then collapsed.
-- `link`: from the `link` children whose `rel` is `alternate` or
-  absent: the first with `type` `text/html` or `application/xhtml+xml`,
+- `link`: from the `link` children whose `rel` is absent, `alternate`,
+  or `http://www.iana.org/assignments/relation/alternate` (RFC 4287
+  4.2.7.2). `rel` and `type` are compared case-insensitively after
+  removing surrounding whitespace. Among them: the first with `type` `text/html` or `application/xhtml+xml`,
   else the first of them. Its `href`, resolved.
 - `id`: `id`.
 - `published`: `published` through `parse_date`; when that is missing
@@ -134,8 +151,8 @@ The feed's `title` and `link`, and for each `entry`:
 | `type` | Body | As a title |
 | --- | --- | --- |
 | absent, `text`, or `text/*` | character data, `is_html=False` | as is |
-| `html` or `text/html` | character data (escaped HTML, decoded once), `is_html=True` | tags removed, references decoded |
-| `xhtml` or `application/xhtml+xml` | character data of all descendants, `is_html=False` | the same |
+| `html` or `text/html` | character data (escaped HTML, decoded once), `is_html=True` | tags removed, references decoded, text inside `script` and `style` dropped |
+| `xhtml` or `application/xhtml+xml` | character data of all descendants, `is_html=False` | the same, text inside XHTML `script` and `style` dropped |
 | anything else | `None` | `None` |
 
 #### Both formats
@@ -156,7 +173,8 @@ Never raises.
    `EST`, numeric offsets. RSS 2.0 requires this format and allows a
    two-digit year.
 3. Otherwise ISO 8601 / RFC 3339 (`datetime.fromisoformat`): `Z` or an
-   offset, or a date alone. Atom requires RFC 3339.
+   offset, or a date alone. Atom requires RFC 3339; its `T` and `Z`
+   may be lowercase (RFC 3339 5.6).
 4. A result without a zone (or with RFC 2822's `-0000`) is taken as UTC.
    A result with one is converted to UTC.
 
@@ -169,6 +187,8 @@ Never raises.
   years.
 - RSS content module, <https://web.resource.org/rss/1.0/modules/content/>:
   `content:encoded` and its namespace.
+- RFC 3339, <https://www.rfc-editor.org/rfc/rfc3339>: section 5.6
+  allows lowercase `t` and `z`.
 - RFC 4287 (Atom): namespace (1.2), dates (3.3), text constructs (3.1),
   `atom:entry` (4.1.2), `atom:content` and `src` (4.1.3),
   `atom:link` (4.2.7).
