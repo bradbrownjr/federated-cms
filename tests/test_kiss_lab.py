@@ -165,6 +165,30 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(received, [valid])
         self.assertIn('source=K1BAD kind=SABM direct=True accepted=False', output.getvalue())
 
+    async def test_extended_setup_refused_then_modulo_eight_setup_accepted(self):
+        local, peer = AX25Address.parse('N0LAB-10'), AX25Address.parse('N0CALL')
+        path = AX25Path(local, peer)
+        port = 2
+        transport = ScopedKiss('127.0.0.1', 1, port, local, peer)
+        station = AX25Station(local, transport)
+        incoming = []
+        station.on_incoming.append(incoming.append)
+        try:
+            with patch.object(transport, '_send_frame', new_callable=AsyncMock) as send:
+                await transport.dispatch(AX25Frame.u_frame(path, UType.SABME, pf=True), port)
+                dm = AX25Frame.u_frame(path.reply(), UType.DM, pf=True, command=False)
+                send.assert_awaited_once_with(dm, port)
+                self.assertIsNone(station.link_to(peer, port))
+                self.assertEqual(incoming, [])
+                send.reset_mock()
+                await transport.dispatch(AX25Frame.u_frame(path, UType.SABM, pf=True), port)
+                ua = AX25Frame.u_frame(path.reply(), UType.UA, pf=True, command=False)
+                send.assert_awaited_once_with(ua, port)
+                self.assertEqual(incoming, [station.link_to(peer, port)])
+                self.assertTrue(incoming[0].connected)
+        finally:
+            station.close()
+
     async def test_connected_stream_only_receives_sequenced_data(self):
         local, peer = AX25Address.parse('N0LAB-10'), AX25Address.parse('N0CALL')
         path = AX25Path(local, peer)
