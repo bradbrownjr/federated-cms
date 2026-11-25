@@ -252,7 +252,7 @@ def _framing(response, url):
     """Validate all framing fields and return the declared length."""
     lengths = response.headers.get_all('Content-Length', [])
     transfer = response.headers.get_all('Transfer-Encoding', [])
-    if transfer and (lengths or ', '.join(transfer).strip().lower() != 'chunked'):
+    if transfer and (lengths or ', '.join(transfer) != 'chunked'):
         raise FetchProtocolError('invalid transfer encoding', url)
     if lengths:
         items = [x.strip(' \t') for line in lengths for x in line.split(',')]
@@ -383,7 +383,14 @@ def fetch(url, *, user_agent, accept='*/*', max_bytes=2_000_000,
             _remaining(deadline, normalized)
             local = ipaddress.ip_address(sock.getsockname()[0])
             remote = ipaddress.ip_address(address)
-            if local == remote or (local.version == remote.version == 6 and int(local) >> 64 == int(remote) >> 64):
+            local_mapped = local.ipv4_mapped if local.version == 6 else None
+            remote_mapped = remote.ipv4_mapped if remote.version == 6 else None
+            if local_mapped is not None or remote_mapped is not None:
+                local, remote = local_mapped or local, remote_mapped or remote
+                same = local == remote
+            else:
+                same = local == remote or (local.version == remote.version == 6 and int(local) >> 64 == int(remote) >> 64)
+            if same:
                 raise FetchAddressError('self connection refused', normalized)
             if scheme == 'https':
                 if ssl_context is None:
@@ -416,8 +423,11 @@ def fetch(url, *, user_agent, accept='*/*', max_bytes=2_000_000,
             if not 200 <= response.status <= 599:
                 raise FetchProtocolError('invalid final status', normalized)
             length = _framing(response, normalized)
-            location = response.headers.get('Location')
-            if response.status in (301, 302, 303, 307, 308) and location is not None:
+            locations = response.headers.get_all('Location', [])
+            if response.status in (301, 302, 303, 307, 308) and locations:
+                if len(locations) > 1:
+                    raise FetchProtocolError('multiple locations', normalized)
+                location = locations[0]
                 if any(not '!' <= c <= '~' for c in location):
                     raise FetchURLError('invalid location', normalized)
                 try:
