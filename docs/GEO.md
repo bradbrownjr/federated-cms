@@ -91,7 +91,7 @@ integers and very long strings.
   and digits are checked as ASCII; a character such as `٣` (Arabic-Indic
   digit), `Ｆ` (fullwidth F) or `K` (Kelvin sign, which lowercases to
   `k`) is refused, not mapped.
-- **Numbers** (`lat`, `lon`, `length`) must be `int` or `float`.
+- **Numbers:** `lat` and `lon` must be `int` or `float`; `length` must be an `int`.
   `bool`, `str`, `None`, `Decimal`, `Fraction`, NaN and infinities are
   refused. `lat` must be within -90..90 and `lon` within -180..180,
   inclusive; the range is checked on the value as given, so an integer
