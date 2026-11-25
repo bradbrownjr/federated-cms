@@ -43,12 +43,15 @@ Create `lab-password.txt` manually with a disposable test
 password, restrict file permissions to the local test account, and configure the
 same test password in the client. The server issues a B2F `;PQ:` challenge and
 checks the client's `;PR:` response against that single configured lab account.
+Do not enter a lab password into a production-linked Winlink Express setup:
+Winlink Express can update the real account password. See
+[Winlink's password guidance](https://winlink.org/content/password_problems).
 The file contains a recoverable plaintext password, which this legacy algorithm
 requires; do not use a real Winlink password or reuse any production secret.
 The challenge uses MD5 and an eight-digit response, is vulnerable to offline
 password guessing and challenge collisions, has no rate limiting, and does not
 encrypt traffic or authenticate the server. It is for interoperability research,
-not production authentication. Do not use actual private mail, RF, or shared-host access.
+not production authentication. Do not use actual private mail or shared-host access.
 There is no SMTP, forwarding, resume, or production mailbox integration.
 The service allows one active lab session per account; its 120-second lease
 expires after inactivity or an interrupted process. A stale session cannot
@@ -70,7 +73,7 @@ adapter checks its configured test account and challenge before invoking it.
 It is not an authorization boundary against other local code or disk access.
 The lease is renewed only during mailbox operations, not while bytes are
 transferring. A transfer lasting more than 120 seconds can lose its lease and
-remain pending for retry. This loopback test mechanism is not ready for RF use.
+remain pending for retry. This mechanism is not ready for general RF service.
 
 `--database` accepts an operator-selected SQLite path; the separate lab tables
 do not enforce physical database or filesystem isolation. Use a dedicated
@@ -150,6 +153,12 @@ optional and must be an unused local SSID in the BPQ configuration.
 The SQLite boundary makes its own atomic transactions. The internal records are
 not all request-envelope JSON; a future B2F adapter maps protocol operations to
 this API, while its binary-clean listener remains separate from BPQ terminal I/O.
+
+For an explicitly operator-controlled experiment with TCP KISS and synthetic
+lab mail, see [TCP-KISS-B2F-LAB.md](TCP-KISS-B2F-LAB.md). This does not make
+the B2F laboratory or its legacy authentication production-ready.
+For packet retry and ACKMODE comparisons, see
+[PACKET-TROUBLESHOOTING.md](PACKET-TROUBLESHOOTING.md).
 
 An apparent BPQ callsign is recorded only as session display context. A random
 session scope limits `JOBS` to work created within that session; a new

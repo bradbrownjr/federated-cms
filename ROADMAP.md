@@ -16,10 +16,12 @@ Milestone exit gates remain open until demonstrated. Checked items denote comple
 
 ## M0.5 — Winlink interoperability feasibility (next priority)
 - [x] Inventory existing kissterm client-side B2F implementation and documented experimental-CMS download (see [findings](docs/KISSTERM-B2F-FINDINGS.md)).
-- [ ] Reuse kissterm protocol fixtures to build an offline, minimal independent B2F server and test with kissterm and Pat.
+- [x] Build an offline minimal independent B2F laboratory and test with kissterm and Pat; see the [compatibility matrix](docs/WINLINK-INTEROPERABILITY.md).
 - [ ] Cross-check B2F client/RMS behavior against Pat and wl2k-go.
 - [x] Inspect the Linux RMS Gateway transport, configuration and dependencies. Exercise the pinned gateway with kissterm and Pat, the test-only SGL adapter, and a persistent B2F mailbox on isolated loopback. [Gateway findings](docs/RMS-GATEWAY-FINDINGS.md).
 - [x] Test independent B2F endpoint with Pat in an isolated lab (synthetic messages via test-only localhost Telnet shim; authentication remains open).
+- [x] Exchange authenticated messages and attachments between unmodified Winlink Express 1.8.0.0 (Packet Winlink) and the B2F lab, over virtual KISS and over 1200-baud RF ([TCP KISS lab](docs/TCP-KISS-B2F-LAB.md)).
+- [x] Server identifier `[FCMS-0.1-B2FWHM$]` includes the `W` from the Open B2F example.
 - [ ] Determine whether unmodified RMS software can use a self-hosted CMS; record blockers and alternatives.
 - [ ] Map Winlink email-based information requests into a generic service-request adapter.
 **Exit:** documented compatibility matrix and go/no-go recommendation for preserving existing clients and gateways. See [research plan](docs/WINLINK-INTEROPERABILITY.md).

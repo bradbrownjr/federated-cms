@@ -85,8 +85,10 @@ against Pat's original outbox file, the move to its sent folder, the downloaded
 message body and attachment in its inbox, and the durable server-side
 acknowledgement. Pat adds a local unread header to its inbox copy.
 
-Pat completed the exchange and returned zero. The upstream gateway exited
-on SIGPIPE during Pat teardown in this build. The harness
+Pat completed the exchange and returned zero. In a traced run the gateway
+forwarded Pat's final `FQ`, then received SIGPIPE while writing its station
+sign-off to the Pat socket. [Gateway teardown findings](../../docs/RMS-GATEWAY-FINDINGS.md).
+The harness
 reports the observed gateway exit and accepts zero or SIGPIPE only for this
 case, while requiring all client and database checks to pass. The kissterm
 terminal UI, AX.25, TNCs and RF are outside these experiments.

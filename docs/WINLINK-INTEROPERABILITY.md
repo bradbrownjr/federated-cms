@@ -1,6 +1,7 @@
 # Winlink interoperability research plan
 
-**Status:** investigation, not implementation or a compatibility claim.
+**Status:** laboratory interoperability demonstrated for the specific
+clients and gateway build below; deployment compatibility remains under investigation.
 
 ## Primary question
 
@@ -22,6 +23,30 @@ Can an existing Winlink-compatible client exchange B2F messages with an independ
 - [Linux RMS Gateway](https://winlink.org/content/linux_rms_gateway): identifies the independently developed gateway and source repository.
 - [rmsgw source](https://github.com/nwdigitalradio/rmsgw): candidate for tracing gateway-to-CMS calls and dependencies.
 - [Pat](https://getpat.io/) and [wl2k-go](https://github.com/la5nta/wl2k-go): open client and protocol implementation to study.
+
+## M0.5 compatibility evidence
+
+These results use synthetic accounts and disposable credentials, without RF
+or production Winlink systems. They are evidence for the tested configurations,
+not a claim that an installed gateway or client is supported in production.
+
+| Interface or configuration | Evidence | Remaining limitation |
+| --- | --- | --- |
+| kissterm B2F client, pinned `f3310c7` → local B2F lab | Bidirectional messages, attachments and durable SQLite state tested locally; client interoperability also runs in CI. | Terminal UI and RF path not exercised. |
+| Pat CLI, pinned `2ad31e8` → local B2F lab | Bidirectional message and attachment exchange tested locally and in CI. | Does not establish behavior of other client versions. |
+| Both pinned clients → pinned `rmsgw` `3147f01` → test SGL adapter → B2F lab | Full isolated local chain tested with separate gateway and mailbox authentication, binary attachments, rejection cases and reopened SQLite. | Full chain is not in CI; the Pat case observed gateway SIGPIPE during teardown. Client-facing streams were simulated sockets, not AX.25. |
+| Pat CLI and kissterm → virtual KISS → guest-kernel AX.25 → `ax25d` → pinned `rmsgw` → lab mailbox | The optional repository guest harness exchanged synthetic messages and attachments, checked reopened SQLite, and rejected a wrong mailbox password. An opt-in experimental patch produced clean gateway exits in all three local cases. | Guest cases are not in CI. The unmodified gateway exited on SIGPIPE in the monitored baseline. No physical TNC or RF was used. |
+| Stock installed Linux RMS gateway, TNC, RF, BPQ32 or RMS Packet deployment | Not demonstrated. | Requires controlled deployment-specific testing; no production compatibility is claimed. |
+| Winlink Express 1.8.0.0, Packet Winlink → virtual TCP KISS → kissterm AX.25 bridge → B2F lab | Authenticated download and upload of synthetic messages with two attachments; server identifier `[FCMS-0.1-B2FWHM$]` includes the `W` from the Open B2F example; validator accepts Express's CRLF+NUL attachment ending. [TCP KISS lab](TCP-KISS-B2F-LAB.md). | Synthetic messages only; one client version. |
+| Winlink Express 1.8.0.0, Packet Winlink → sound modem → 1200 baud RF (5 W, direct) → kissterm AX.25 bridge → B2F lab | Authenticated upload and download with attachments; uploaded and downloaded binary fixtures matched byte for byte and by SHA-256. NORMAL KISS mode retried and failed once; ACKMODE completed (2,109 bytes, 44 s). | A handful of operator-run sessions with uncontrolled radio conditions. Not in CI. No RMS gateway or BPQ in the path. |
+
+The gateway experiment compiles the pinned upstream session and relay code
+with lab-specific paths and logging shims; it is not a stock installed binary.
+See [the client harness](../tests/rmsgw_full/README.md),
+[AX.25 guest harness](../tests/ax25_guest/README.md), and
+[gateway findings](RMS-GATEWAY-FINDINGS.md) for setup and evidence.
+The [hardware lab plan](AX25-HARDWARE-LAB-PLAN.md) describes information
+needed before testing a physical TNC or modem.
 
 ## Research work packages
 

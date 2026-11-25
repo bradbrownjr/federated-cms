@@ -139,8 +139,24 @@ Pat's Telnet prompts and handed the connected socket to the gateway. Pat
 composed and sent the upload, filed the received download in its inbox,
 and exited successfully. Reopening the database confirmed the exact upload
 and the acknowledged download. Pat's inbox preserved the complete downloaded
-body and binary attachment. The gateway exited on SIGPIPE during Pat
-teardown. A clean gateway exit for this path remains unverified.
+body and binary attachment.
+
+In an ordinary five-case run, the gateway exited zero in the four other cases
+and received SIGPIPE in the Pat case. A second Pat run traced the gateway
+process with Linux strace 6.13 inside fresh isolated namespaces. The gateway
+forwarded Pat's final B2F `FQ` to the CMS socket, read EOF on the Pat socket
+and closed the CMS descriptor. Its session-statistics write to Pat returned
+the full byte count. Its next write, the 21-byte station sign-off
+`; N0CALL de N0LAB SK\n`, returned `EPIPE`, followed by SIGPIPE and process
+exit. The successful statistics write establishes local kernel acceptance only.
+Pat exited zero, and the client and reopened mailbox checks passed in both runs.
+
+The pinned source writes the sign-off before recording logout and updating
+per-user statistics. The signal interrupted those later steps in the traced
+session. This unmodified loopback run did not demonstrate a clean gateway
+exit on the Pat path. The trace
+covers a single loopback session and does not establish close ordering on
+other transports. [Pinned gateway session code](https://github.com/nwdigitalradio/rmsgw/blob/3147f017545f43c4b83ef6a037b8b0e38d0719af/rmsgw/session.c#L169-L201).
 
 This validates the pinned client protocol engine and CLI, upstream gateway session
 and relay code, test-only SGL adapter, and shared lab mailbox in the isolated
@@ -148,3 +164,36 @@ Linux build. The gateway uses the lab build paths and shims described above.
 RF and AX.25, stock installed gateway binaries, other gateway revisions, and
 production authentication remain unverified by this experiment.
 [Reproduce the five namespace cases](../tests/rmsgw_full/README.md).
+
+## Isolated virtual AX.25 guest
+
+In a separate local experiment, a disposable Debian 6.12.118 kernel ran in a
+QEMU TCG guest with no network device, shared filesystem, or device passthrough.
+Two pseudo-terminal KISS interfaces formed a software link. Pat CLI at pinned
+commit `2ad31e8` connected using Linux AX.25; guest `ax25d` accepted a
+connected `AF_AX25` / `SOCK_SEQPACKET` socket and launched the pinned lab
+build of `rmsgw`. The gateway reached the synthetic SGL adapter and shared B2F
+mailbox within the guest. The test observed AX.25 connection and data frames,
+verified synthetic messages and binary attachments in both directions, and
+reopened SQLite to check the upload and delivery acknowledgement.
+
+Separate guest runs used kissterm's AX.25 implementation and TCP KISS
+transport against the guest's virtual KISS bridge. A positive exchange
+verified messages, attachments and reopened mailbox state; another run
+verified that a wrong B2F mailbox secret was rejected and pending mail remained
+unchanged. The guest gateway side still used a kernel AX.25 socket and `ax25d`.
+
+Earlier exploratory runs encountered a KISS bridge error, an `ax25d` rule
+rejection, an `ax25d` accept error during fixture shutdown, and a bridge-thread
+exception. The packaged [offline guest harness](../tests/ax25_guest/README.md)
+uses pinned local inputs and ordered fixture shutdown. Its three local cases
+passed message or rejection assertions, AX.25 release and listener shutdown;
+the full QEMU experiment is optional and is not run in CI.
+
+The harness separately monitors gateway process exit. In an unmodified pinned
+gateway run all three cases ended with SIGPIPE. An **opt-in experimental
+patch** blocks SIGPIPE only around the two final optional session notices. In
+a separate local run with that patch, all three gateway processes exited zero
+and the exchange or rejection checks passed. This does not modify an installed
+gateway or prove clean shutdown in other conditions. Other gateway writes,
+repeated sessions, stock installations, physical TNCs and RF remain unverified.

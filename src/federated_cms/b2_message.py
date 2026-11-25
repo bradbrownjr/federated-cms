@@ -17,6 +17,17 @@ def message_mid(raw: bytes) -> str:
     This preserves raw bytes, including attachments. It validates framing and
     sizes only; message addresses are not proof of identity or authorization.
     """
+    mid, _, _ = _message_sections(raw)
+    return mid
+
+
+def message_attachments(raw: bytes) -> list[tuple[bytes, bytes]]:
+    """Return the validated attachment names and exact bytes in header order."""
+    _, content, sections = _message_sections(raw)
+    return [(name, content[start:end]) for name, start, end in sections]
+
+
+def _message_sections(raw: bytes) -> tuple[str, bytes, list[tuple[bytes, int, int]]]:
     if not isinstance(raw, bytes) or len(raw) > MAX_MESSAGE or b"\r\n\r\n" not in raw:
         raise B2MessageError("invalid B2 message")
     header_block, content = raw.split(b"\r\n\r\n", 1)
@@ -39,22 +50,29 @@ def message_mid(raw: bytes) -> str:
     bodies = [value for name, value in headers if name == b"body"]
     if len(bodies) != 1 or not re.fullmatch(rb"[0-9]{1,6}", bodies[0]):
         raise B2MessageError("invalid B2 body length")
-    lengths = [int(bodies[0])]
+    lengths = [(int(bodies[0]), b"")]
     for name, value in headers:
         if name == b"file":
             size, separator, filename = value.partition(b" ")
             if not separator or not filename.strip() or not re.fullmatch(rb"[0-9]{1,6}", size):
                 raise B2MessageError("invalid B2 file header")
-            lengths.append(int(size))
+            lengths.append((int(size), filename))
     pos = 0
-    for index, length in enumerate(lengths):
+    attachments = []
+    for index, (length, filename) in enumerate(lengths):
         if length > MAX_MESSAGE or pos + length > len(content):
             raise B2MessageError("truncated B2 section")
+        if index:
+            attachments.append((filename, pos, pos + length))
         pos += length
         if index + 1 < len(lengths):
             if content[pos:pos + 2] != b"\r\n":
                 raise B2MessageError("missing B2 section separator")
             pos += 2
-    if content[pos:] not in (b"", b"\r\n"):
+    # Express 1.8.0.0 has been observed ending an attachment message with
+    # the specified final CRLF followed by one NUL. Preserve it as received;
+    # do not accept general trailing content or add a NUL to other messages.
+    endings = (b"", b"\r\n", b"\r\n\x00") if len(lengths) > 1 else (b"", b"\r\n")
+    if content[pos:] not in endings:
         raise B2MessageError("unexpected B2 trailing data")
-    return mids[0]
+    return mids[0], content, attachments
