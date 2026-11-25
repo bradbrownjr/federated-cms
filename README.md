@@ -13,7 +13,7 @@ Federated CMS is a self-hosted mail and information server for amateur radio.
 
 - **Client choice.** Winlink's production servers accept only client programs they recognise. [kissterm](https://github.com/bradbrownjr/kissterm), an independent B2F client, is answered "Unknown client types are not allowed on production servers -- use cms-z.winlink.org", over the Internet and through an RMS gateway alike; the test server accepts it ([kissterm roadmap](https://github.com/bradbrownjr/kissterm/blob/main/docs/ROADMAP.md)).
 - **Modem choice.** Winlink clients and gateways support a fixed set of modes: PACTOR, ARDOP, VARA and packet, plus Telnet. New modems keep appearing, and a self-hosted node can carry B2F over any of them.
-- **Independence.** Winlink's gateway software requires "a full-time Internet connection" to its central servers ([Winlink sysop software](https://winlink.org/node/21)). A node that fetches its own information keeps working when a central service or its hosting provider is down.
+- **Independence.** Winlink's gateway software requires "a full-time Internet connection" ([Winlink sysop software](https://winlink.org/node/21)). A node that fetches its own information keeps working when a central service or its hosting provider is down.
 
 ## M1 local prototype
 
