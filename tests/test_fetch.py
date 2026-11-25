@@ -9,6 +9,7 @@ real address policy is exercised unchanged.
 from __future__ import annotations
 
 import dataclasses
+import ast
 import ipaddress
 import math
 import random
@@ -53,6 +54,10 @@ PUBLIC_V4_B = "93.184.215.15"    # other.example
 PUBLIC_V4_C = "93.184.215.16"    # secure.example, wrong.example (TLS server)
 PUBLIC_V6 = "2606:4700:4700::1111"
 
+TOTAL = 0.2        # total_timeout used by the deadline tests
+SLACK = 0.5        # allowed lateness: spec says about 0.2 s, plus scheduling noise
+SRC = Path(__file__).resolve().parent.parent / "src"
+
 # Server-side handlers stop on their own after this long, so a broken
 # implementation cannot hang the suite.
 HANDLER_CAP = 3.0
@@ -75,6 +80,27 @@ class Seen:
 
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+
+    def setup(self) -> None:
+        srv = self.server
+        if srv.tls is not None:
+            if srv.handshake_stall:
+                srv.stop.wait(HANDLER_CAP)
+                raise ConnectionAbortedError("test: handshake stalled on purpose")
+            self.request.settimeout(2.0)
+            tls = srv.tls.wrap_socket(self.request, server_side=True,
+                                      do_handshake_on_connect=False)
+            tls.do_handshake()          # failures go to handle_error, silently
+            tls.settimeout(HANDLER_CAP)
+            self.request = tls
+        super().setup()
+
+    def finish(self) -> None:
+        try:
+            super().finish()
+        finally:
+            if self.server.tls is not None:
+                self.request.close()
 
     def do_GET(self) -> None:  # noqa: N802
         srv = self.server
@@ -110,12 +136,13 @@ class LocalServer:
         self.httpd.routes = {}
         self.httpd.log = []
         self.httpd.connections = 0
+        self.httpd.handshake_stall = False
         self.sni: list[str | None] = []
         self.stop = threading.Event()
         self.httpd.stop = self.stop
+        self.httpd.tls = tls
         if tls is not None:
             tls.sni_callback = lambda sslsock, name, ctx: self.sni.append(name)
-            self.httpd.socket = tls.wrap_socket(self.httpd.socket, server_side=True)
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=self.httpd.serve_forever,
                                        kwargs={"poll_interval": 0.05}, daemon=True)
@@ -141,6 +168,7 @@ class LocalServer:
         self.httpd.routes = {}
         self.httpd.log = []
         self.httpd.connections = 0
+        self.httpd.handshake_stall = False
         self.sni.clear()
 
     def close(self) -> None:
@@ -300,7 +328,9 @@ def server_tls_context() -> ssl.SSLContext:
 
 
 def client_tls_context() -> ssl.SSLContext:
-    return ssl.create_default_context(cafile=str(FIXTURES / "ca.pem"))
+    ctx = ssl.create_default_context(cafile=str(FIXTURES / "ca.pem"))
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    return ctx
 
 
 @pytest.fixture(scope="module")
@@ -370,7 +400,8 @@ ALLOWED = [
     "93.184.215.14",
     "8.8.8.8",
     "1.1.1.1",
-    "44.0.0.1",                     # AMPRNet: public; deny_networks narrows it
+    "44.0.0.1",                     # AMPRNet 44.0.0.0/9: allowed by default
+    "44.128.0.1",                   # AMPRNet 44.128.0.0/10
     "2606:4700:4700::1111",
     "2001:4860:4860::8888",
     "::ffff:8.8.8.8",               # IPv4-mapped public address
@@ -601,7 +632,7 @@ def test_connects_to_the_checked_address_with_one_lookup(server):
     assert server.log[0].header("Host") == "rebind.example"
 
 
-def test_rebinding_on_second_lookup_cannot_reach_loopback(server):
+def test_resolver_answer_of_loopback_refused(server):
     net = FakeNetwork({"rebind.example": lambda n: ["127.0.0.1"]},
                       {("127.0.0.1", 80): server.port})
     server.routes["/"] = ok()
@@ -814,8 +845,9 @@ BAD_ARGS = [
     {"connect_timeout": math.inf}, {"connect_timeout": True}, {"connect_timeout": "1"},
     {"read_timeout": 0}, {"total_timeout": 0}, {"total_timeout": math.inf},
     {"ports": ()}, {"ports": (0,)}, {"ports": (65536,)}, {"ports": (True,)},
-    {"ports": ("80",)},
-    {"deny_networks": ("not-a-network",)},
+    {"ports": ("80",)}, {"ports": "80"}, {"ports": b"P"}, {"ports": 80},
+    {"deny_networks": ("not-a-network",)}, {"deny_networks": "10.0.0.0/8"},
+    {"deny_networks": b"10.0.0.0/8"}, {"deny_networks": 10},
     {"ssl_context": "yes"},
 ]
 
@@ -842,24 +874,46 @@ def test_arguments_checked_before_url():
         fetch("file:///etc/passwd", user_agent="curl/8", network=net)
 
 
-def _weak_contexts():
-    no_hostname = ssl.create_default_context()
-    no_hostname.check_hostname = False
-    no_verify = ssl.create_default_context()
-    no_verify.check_hostname = False
-    no_verify.verify_mode = ssl.CERT_NONE
-    optional = ssl.create_default_context()
-    optional.verify_mode = ssl.CERT_OPTIONAL
-    return [no_hostname, no_verify, optional]
+def _weak_context(kind, tmp_path):
+    ctx = client_tls_context()                       # acceptable as built
+    if kind == "no-hostname":
+        ctx.check_hostname = False
+    elif kind == "cert-none":
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    elif kind == "cert-optional":
+        ctx.verify_mode = ssl.CERT_OPTIONAL
+    elif kind == "tls-1.1":
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_1
+    elif kind == "minimum-supported":
+        ctx.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
+    elif kind == "keylog":
+        ctx.keylog_filename = str(tmp_path / "keys.log")
+    return ctx
 
 
-@pytest.mark.parametrize("context", _weak_contexts(), ids=["no-hostname", "cert-none",
-                                                          "cert-optional"])
-def test_weakened_tls_context_refused_even_for_http(context):
+@pytest.mark.filterwarnings("ignore:ssl.TLSVersion.TLSv1_1 is deprecated:DeprecationWarning")
+@pytest.mark.parametrize("kind", ["no-hostname", "cert-none", "cert-optional", "tls-1.1",
+                                  "minimum-supported", "keylog"])
+def test_weakened_tls_context_refused_even_for_http(kind, tmp_path):
     net = AnythingResolves()
     with pytest.raises(FetchConfigError):
-        get("http://public.example/", net, ssl_context=context)
+        get("http://public.example/", net, ssl_context=_weak_context(kind, tmp_path))
     assert net.resolved == []
+
+
+def test_unset_minimum_version_refused():
+    ctx = ssl.create_default_context(cafile=str(FIXTURES / "ca.pem"))
+    with pytest.raises(FetchConfigError):
+        get("http://public.example/", AnythingResolves(), ssl_context=ctx)
+
+
+@pytest.mark.parametrize("version", ["TLSv1_2", "TLSv1_3"])
+def test_tls_12_and_13_minimums_accepted(server, net, version):
+    ctx = client_tls_context()
+    ctx.minimum_version = getattr(ssl.TLSVersion, version)
+    server.routes["/"] = ok()
+    assert get("http://public.example/", net, ssl_context=ctx).status == 200
 
 
 # -------------------------------------------------------------- proxies
@@ -1281,9 +1335,9 @@ def test_slow_drip_headers_hit_total_limit(server, net):
     server.routes["/drip"] = drip(b"HTTP/1.1 200 OK\r\n", b"X")
     start = time.monotonic()
     with pytest.raises(FetchTimeoutError) as err:
-        get("http://public.example/drip", net, read_timeout=2, total_timeout=0.4)
+        get("http://public.example/drip", net, read_timeout=2, total_timeout=TOTAL)
     elapsed = time.monotonic() - start
-    assert 0.35 <= elapsed < 1.2
+    assert TOTAL - 0.05 <= elapsed < TOTAL + SLACK
     assert err.value.url == "http://public.example/drip"
 
 
@@ -1291,8 +1345,8 @@ def test_slow_drip_body_hits_total_limit(server, net):
     server.routes["/drip"] = drip(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n", b"x")
     start = time.monotonic()
     with pytest.raises(FetchTimeoutError):
-        get("http://public.example/drip", net, read_timeout=2, total_timeout=0.4)
-    assert 0.35 <= time.monotonic() - start < 1.2
+        get("http://public.example/drip", net, read_timeout=2, total_timeout=TOTAL)
+    assert TOTAL - 0.05 <= time.monotonic() - start < TOTAL + SLACK
 
 
 def test_total_limit_covers_redirect_hops(server, net):
@@ -1300,8 +1354,8 @@ def test_total_limit_covers_redirect_hops(server, net):
     server.routes["/drip"] = drip(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n", b"x")
     start = time.monotonic()
     with pytest.raises(FetchTimeoutError) as err:
-        get("http://public.example/r", net, read_timeout=2, total_timeout=0.4)
-    assert time.monotonic() - start < 1.2
+        get("http://public.example/r", net, read_timeout=2, total_timeout=TOTAL)
+    assert time.monotonic() - start < TOTAL + SLACK
     assert err.value.url == "http://public.example/drip"
 
 
@@ -1310,7 +1364,7 @@ def test_read_timeout(server, net):
     start = time.monotonic()
     with pytest.raises(FetchTimeoutError):
         get("http://public.example/stall", net, read_timeout=0.3, total_timeout=5)
-    assert 0.25 <= time.monotonic() - start < 1.2
+    assert 0.25 <= time.monotonic() - start < 0.3 + SLACK
 
 
 def test_no_response_at_all_times_out(server, net):
@@ -1383,3 +1437,426 @@ def test_no_environment_switch_widens_policy(server, monkeypatch):
     with pytest.raises(FetchAddressError):
         get("http://loop.example/", net)
     assert is_public_address("127.0.0.1") is False
+
+
+# ------------------------------------------------- production network path
+
+
+def _addrinfo(address: str, port: int):
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    sockaddr = (address, port, 0, 0) if family == socket.AF_INET6 else (address, port)
+    return (family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", sockaddr)
+
+
+def test_production_path_uses_one_lookup(server, monkeypatch):
+    """network=None: SystemNetwork resolves once; a second lookup would be loopback."""
+    lookups = []
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        lookups.append(host)
+        return [_addrinfo(PUBLIC_V4 if len(lookups) == 1 else "127.0.0.1", port)]
+
+    dials = []
+
+    def fake_connect(self, address, port, timeout):
+        dials.append((address, port))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect(("127.0.0.1", server.port))
+        return sock
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(SystemNetwork, "connect", fake_connect)
+    server.routes["/"] = ok(b"public")
+    result = fetch("http://rebind.example/", user_agent=UA)
+    assert result.content == b"public"
+    assert lookups == ["rebind.example"]
+    assert dials == [(PUBLIC_V4, 80)]
+    assert result.address == PUBLIC_V4
+
+
+def test_system_network_removes_duplicates(monkeypatch):
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        return [_addrinfo(PUBLIC_V4, port), _addrinfo(PUBLIC_V4, port),
+                _addrinfo(PUBLIC_V6, port), _addrinfo(PUBLIC_V4_B, port),
+                _addrinfo(PUBLIC_V6, port)]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    assert list(SystemNetwork().resolve("dup.example", 80, 1.0)) == [
+        PUBLIC_V4, PUBLIC_V6, PUBLIC_V4_B]
+
+
+def test_system_network_timeout_and_thread_cap(monkeypatch):
+    release = threading.Event()
+    started: list[str] = []
+
+    def blocking_getaddrinfo(host, port, *args, **kwargs):
+        started.append(host)
+        if host.startswith("stuck"):
+            release.wait(5)
+        return [_addrinfo(PUBLIC_V4, port)]
+
+    monkeypatch.setattr(socket, "getaddrinfo", blocking_getaddrinfo)
+    net = SystemNetwork()
+    try:
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            net.resolve("stuck0.example", 80, 0.1)
+        assert time.monotonic() - start < 0.1 + SLACK
+        for i in range(1, 8):                       # 8 abandoned lookups in total
+            with pytest.raises(TimeoutError):
+                SystemNetwork().resolve(f"stuck{i}.example", 80, 0.02)
+        with pytest.raises(OSError) as err:         # the ninth is refused at once
+            SystemNetwork().resolve("stuck8.example", 80, 1.0)
+        assert not isinstance(err.value, TimeoutError)
+        with pytest.raises(FetchConnectError):
+            fetch("http://ninth.example/", user_agent=UA)
+        time.sleep(0.05)
+        assert "stuck8.example" not in started and "ninth.example" not in started
+    finally:
+        release.set()
+    deadline = time.monotonic() + 2
+    while True:                                     # threads drain once released
+        try:
+            assert list(net.resolve("after.example", 80, 1.0)) == [PUBLIC_V4]
+            break
+        except OSError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.01)
+
+
+# --------------------------------------------------------- self-connection
+
+
+class _LocalAddressSocket(socket.socket):
+    """A socket that reports a chosen local address."""
+
+    fake_local: tuple = ()
+
+    def getsockname(self):
+        return self.fake_local
+
+
+class _SelfNetwork(FakeNetwork):
+    def __init__(self, port, local):
+        super().__init__({"self.example": [PUBLIC_V4], "self6.example": [PUBLIC_V6]},
+                         {(PUBLIC_V4, 80): port, (PUBLIC_V6, 80): port})
+        self.local = local
+
+    def connect(self, address, port, timeout):
+        self.connected.append((address, port, timeout))
+        sock = _LocalAddressSocket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.fake_local = self.local
+        sock.settimeout(timeout)
+        sock.connect(("127.0.0.1", self.routes[(address, port)]))
+        return sock
+
+
+@pytest.mark.parametrize("host,local", [
+    ("self.example", (PUBLIC_V4, 50000)),
+    ("self6.example", ("2606:4700:4700::1111", 50000, 0, 0)),
+    ("self6.example", ("2606:4700:4700::beef", 50000, 0, 0)),     # same /64
+])
+def test_self_connection_refused(server, host, local):
+    net = _SelfNetwork(server.port, local)
+    server.routes["/"] = ok()
+    with pytest.raises(FetchAddressError):
+        get(f"http://{host}/", net)
+    assert server.log == []
+    assert len(net.connected) == 1
+
+
+@pytest.mark.parametrize("host,local", [
+    ("self.example", ("93.184.215.99", 50000)),
+    ("self6.example", ("2606:4700:4701::1", 50000, 0, 0)),        # other /64
+    ("self.example", ("127.0.0.1", 50000)),
+])
+def test_other_local_address_allowed(server, host, local):
+    net = _SelfNetwork(server.port, local)
+    server.routes["/"] = ok()
+    assert get(f"http://{host}/", net).status == 200
+
+
+# ------------------------------------------------------- argument iterables
+
+
+def test_deny_networks_iterator_applies_to_every_hop(server, net):
+    server.routes["/r"] = redirect("http://other.example/x")
+    server.routes["/x"] = ok()
+    with pytest.raises(FetchAddressError) as err:
+        get("http://public.example/r", net, deny_networks=iter([PUBLIC_V4_B + "/32"]))
+    assert err.value.url == "http://other.example/x"
+    assert net.addresses == [PUBLIC_V4]
+
+
+def test_ports_iterator_applies_to_every_hop(server, net):
+    server.routes["/r"] = redirect("http://public.example:8080/x")
+    server.routes["/x"] = ok(b"8080")
+    result = get("http://public.example/r", net, ports=iter([80, 8080]))
+    assert result.content == b"8080"
+
+
+# -------------------------------------------------------------- deadlines
+
+
+class _SlowNetwork(FakeNetwork):
+    def __init__(self, port, slow_resolve=0.0, slow_connect=0.0):
+        super().__init__({"slow.example": [PUBLIC_V4]}, {(PUBLIC_V4, 80): port})
+        self.slow_resolve, self.slow_connect = slow_resolve, slow_connect
+
+    def resolve(self, host, port, timeout):
+        time.sleep(self.slow_resolve)
+        return super().resolve(host, port, timeout)
+
+    def connect(self, address, port, timeout):
+        sock = super().connect(address, port, timeout)
+        time.sleep(self.slow_connect)
+        return sock
+
+
+def test_deadline_passed_during_resolve(server):
+    net = _SlowNetwork(server.port, slow_resolve=TOTAL + 0.05)
+    server.routes["/"] = ok()
+    with pytest.raises(FetchTimeoutError):
+        get("http://slow.example/", net, total_timeout=TOTAL)
+    assert net.connected == []
+
+
+def test_deadline_passed_during_connect(server):
+    net = _SlowNetwork(server.port, slow_connect=TOTAL + 0.05)
+    server.routes["/"] = ok()
+    with pytest.raises(FetchTimeoutError):
+        get("http://slow.example/", net, total_timeout=TOTAL)
+    assert server.log == []
+
+
+# --------------------------------------------------------------------- TLS
+
+
+def test_https_to_ip_literal(tls_server, tls_net):
+    tls_net.routes[(PUBLIC_V4_C, 443)] = tls_server.port
+    tls_server.routes["/ip"] = ok(b"by address")
+    result = get(f"https://{PUBLIC_V4_C}/ip", tls_net, ssl_context=client_tls_context())
+    assert result.content == b"by address"
+    assert tls_net.resolved == []
+    assert tls_server.log[0].header("Host") == PUBLIC_V4_C
+
+
+def test_https_to_ip_literal_not_in_certificate(tls_server, tls_net):
+    other = "93.184.215.17"
+    tls_net.routes[(other, 443)] = tls_server.port
+    with pytest.raises(FetchTLSError):
+        get(f"https://{other}/ip", tls_net, ssl_context=client_tls_context())
+
+
+def test_tls_failure_does_not_try_next_address(tls_server, tls_net):
+    tls_net.answers["wrong.example"] = [PUBLIC_V4_C, "93.184.215.18"]
+    tls_net.routes[("93.184.215.18", 443)] = tls_server.port
+    with pytest.raises(FetchTLSError):
+        get("https://wrong.example/", tls_net, ssl_context=client_tls_context())
+    assert tls_net.addresses == [PUBLIC_V4_C]
+
+
+def test_tls_handshake_stall_hits_total_limit(tls_server, tls_net):
+    tls_server.httpd.handshake_stall = True
+    tls_net.answers["secure.example"] = [PUBLIC_V4_C, "93.184.215.18"]
+    tls_net.routes[("93.184.215.18", 443)] = tls_server.port
+    start = time.monotonic()
+    with pytest.raises(FetchTimeoutError):
+        get("https://secure.example/", tls_net, ssl_context=client_tls_context(),
+            connect_timeout=5, read_timeout=5, total_timeout=TOTAL)
+    assert TOTAL - 0.05 <= time.monotonic() - start < TOTAL + SLACK
+    assert tls_net.addresses == [PUBLIC_V4_C]       # no fallback after a TLS timeout
+
+
+def test_tls_handshake_timeout_uses_connect_timeout(tls_server, tls_net):
+    tls_server.httpd.handshake_stall = True
+    start = time.monotonic()
+    with pytest.raises(FetchTimeoutError):
+        get("https://secure.example/", tls_net, ssl_context=client_tls_context(),
+            connect_timeout=0.2, total_timeout=5)
+    assert 0.15 <= time.monotonic() - start < 0.2 + SLACK
+
+
+def test_tls_slow_drip_hits_total_limit(tls_server, tls_net):
+    tls_server.routes["/drip"] = drip(b"HTTP/1.1 200 OK\r\n", b"X")
+    start = time.monotonic()
+    with pytest.raises(FetchTimeoutError):
+        get("https://secure.example/drip", tls_net, ssl_context=client_tls_context(),
+            read_timeout=2, total_timeout=TOTAL)
+    assert TOTAL - 0.05 <= time.monotonic() - start < TOTAL + SLACK
+
+
+def test_tls_slow_drip_body_hits_total_limit(tls_server, tls_net):
+    tls_server.routes["/drip"] = drip(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n", b"x")
+    start = time.monotonic()
+    with pytest.raises(FetchTimeoutError):
+        get("https://secure.example/drip", tls_net, ssl_context=client_tls_context(),
+            read_timeout=2, total_timeout=TOTAL)
+    assert TOTAL - 0.05 <= time.monotonic() - start < TOTAL + SLACK
+
+
+def test_default_context_ignores_sslkeylogfile(tls_server, tls_net, monkeypatch, tmp_path):
+    """SSL_CERT_FILE is OpenSSL's documented trust override; SSLKEYLOGFILE must not apply."""
+    keylog = tmp_path / "keys.log"
+    monkeypatch.setenv("SSL_CERT_FILE", str(FIXTURES / "ca.pem"))
+    monkeypatch.setenv("SSLKEYLOGFILE", str(keylog))
+    tls_server.routes["/ok"] = ok(b"trusted via SSL_CERT_FILE")
+    result = get("https://secure.example/ok", tls_net)
+    assert result.content == b"trusted via SSL_CERT_FILE"
+    # Setting keylog_filename writes a "#" header line at once; secrets would follow.
+    lines = keylog.read_text().splitlines() if keylog.exists() else []
+    assert [line for line in lines if not line.startswith("#")] == []
+
+
+# ---------------------------------------------------------- framing rules
+
+
+@pytest.mark.parametrize("headers", [
+    b"Content-Length: 5\r\n",
+    b"Content-Length: 5, 5\r\n",
+    b"Content-Length: 5\r\nContent-Length: 5\r\n",
+    b"Content-Length:  5 \r\n",
+])
+def test_valid_content_length_forms(server, net, headers):
+    server.routes["/cl"] = raw(b"HTTP/1.1 200 OK\r\n" + headers + b"Connection: close\r\n\r\nhello")
+    assert get("http://public.example/cl", net).content == b"hello"
+
+
+@pytest.mark.parametrize("headers", [
+    b"Content-Length: +5\r\n",
+    b"Content-Length: 0x5\r\n",
+    b"Content-Length: 5;x\r\n",
+    b"Content-Length: 5, 6\r\n",
+    b"Content-Length: 5\r\nContent-Length: 6\r\n",
+    b"Content-Length: \r\n",
+    b"Content-Length: -5\r\n",
+    b"Content-Length: 5,\r\n",
+    b"Content-Length: 5\r\nTransfer-Encoding: chunked\r\n",
+    b"Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n",
+    b"Transfer-Encoding: chunked, chunked\r\n",
+    b"Transfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n",
+    b"Transfer-Encoding: identity\r\n",
+])
+def test_invalid_framing_headers(server, net, headers):
+    server.routes["/f"] = raw(b"HTTP/1.1 200 OK\r\n" + headers + b"Connection: close\r\n\r\n"
+                              b"5\r\nhello\r\n0\r\n\r\n")
+    with pytest.raises(FetchProtocolError):
+        get("http://public.example/f", net, read_timeout=1, total_timeout=3)
+
+
+@pytest.mark.parametrize("response", [
+    b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n",
+    b"HTTP/1.1 103 Early Hints\r\nLink: </a.css>\r\n\r\n"
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    b"HTTP/1.1 199 Odd\r\nContent-Length: 0\r\n\r\n",
+])
+def test_final_1xx_is_protocol_error(server, net, response):
+    server.routes["/1xx"] = raw(response)
+    with pytest.raises(FetchProtocolError):
+        get("http://public.example/1xx", net, read_timeout=1, total_timeout=3)
+
+
+def test_100_continue_is_skipped(server, net):
+    server.routes["/100"] = raw(b"HTTP/1.1 100 Continue\r\n\r\n"
+                                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    result = get("http://public.example/100", net)
+    assert result.status == 200 and result.content == b"ok"
+
+
+# ------------------------------------------------------- bytes on the wire
+
+
+WIRE_LIMIT_BODY = 100_000            # max_encoded_bytes in these tests
+WIRE_BUDGET = WIRE_LIMIT_BODY + 262_144
+
+
+@pytest.mark.parametrize("name", ["headers", "continues", "chunk-extensions", "trailers"])
+def test_every_byte_read_counts(server, net, name):
+    if name == "headers":
+        head = b"HTTP/1.1 200 OK\r\n" + b"".join(
+            b"X-Pad-%d: %s\r\n" % (i, b"a" * 5000) for i in range(90)) + b"\r\n"
+        handler = raw(head)                                  # 450 KB of headers
+    elif name == "continues":
+        handler = stream_forever(b"", b"HTTP/1.1 100 Continue\r\n\r\n" * 1000)
+    elif name == "chunk-extensions":
+        piece = b"1;ext=" + b"e" * 60_000 + b"\r\nx\r\n"
+        handler = raw(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                      + piece * 10 + b"0\r\n\r\n")          # 10 body bytes, 600 KB wire
+    else:
+        handler = stream_forever(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                                 b"1\r\nx\r\n0\r\n", b"X-Trailer: " + b"t" * 1000 + b"\r\n")
+    server.routes["/w"] = handler
+    with pytest.raises(FetchTooLargeError):
+        get("http://public.example/w", net, max_encoded_bytes=WIRE_LIMIT_BODY,
+            read_timeout=2, total_timeout=5)
+
+
+def test_wire_budget_allows_ordinary_headers(server, net):
+    body = b"b" * WIRE_LIMIT_BODY
+    headers = tuple((f"X-Pad-{i}", "a" * 2000) for i in range(100 - 3))   # about 200 KB
+    server.routes["/w"] = lambda h: send(h, 200, body, headers)
+    result = get("http://public.example/w", net, max_encoded_bytes=WIRE_LIMIT_BODY)
+    assert result.content == body
+
+
+# ------------------------------------------------------- more content codings
+
+
+def test_gzip_members_count_together(server, net):
+    member = gzip_bytes(b"m" * 6_000)
+    server.routes["/mm"] = lambda h: send(h, 200, member + member,
+                                          (("Content-Encoding", "gzip"),))
+    with pytest.raises(FetchTooLargeError):
+        get("http://public.example/mm", net, max_bytes=10_000)
+
+
+@pytest.mark.parametrize("raw_stream", [False, True])
+def test_deflate_first_read_of_one_byte(server, net, raw_stream):
+    encoded = deflate_bytes(BODY, raw_stream=raw_stream)
+
+    def handler(h):
+        h.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+                      b"Content-Encoding: deflate\r\nConnection: close\r\n\r\n")
+        h.wfile.write(b"1\r\n" + encoded[:1] + b"\r\n")
+        time.sleep(0.05)
+        rest = encoded[1:]
+        h.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(rest), rest))
+
+    server.routes["/d"] = handler
+    assert get("http://public.example/d", net).content == BODY
+
+
+# ------------------------------------------------------------ cleaned text
+
+
+def test_reason_and_header_values_cleaned(server, net):
+    server.routes["/esc"] = raw(
+        b"HTTP/1.1 200 OK\x1b[2J\x07\r\n"
+        b"Content-Type: text/plain\x1b]0;owned\x07\r\n"
+        b"Content-Language: en\tus\xe9\r\n"
+        b"Content-Length: 2\r\n\r\nok")
+    result = get("http://public.example/esc", net)
+    assert result.reason == "OK?[2J?"
+    assert result.headers["content-type"] == "text/plain?]0;owned?"
+    assert result.content_type == "text/plain?]0;owned?"
+    assert result.headers["content-language"] == "en?us?"
+    for value in (result.reason, *result.headers.values()):
+        assert all(0x20 <= ord(c) <= 0x7E for c in value)
+
+
+# ------------------------------------------------------------------- lint
+
+
+def test_only_fetch_module_passes_network():
+    offenders = []
+    for path in sorted(SRC.rglob("*.py")):
+        if path.relative_to(SRC).as_posix() == "federated_cms/fetch.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and any(k.arg == "network" for k in node.keywords):
+                offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
+    assert offenders == []

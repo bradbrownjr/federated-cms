@@ -65,6 +65,7 @@ FetchError(Exception)                  .url: str | None
   whose response carried the redirect.
 - Every other error: the URL being resolved, connected to or read. For
   a redirect target that passed the URL rules, that is the target.
+
 Every exception from `fetch` is a `FetchError`; `OSError`,
 `ssl.SSLError`, `http.client.HTTPException`, `zlib.error` and
 `UnicodeError` never escape. The original exception is the
@@ -82,9 +83,9 @@ class Hop:
 class FetchResult:
     url: str                     # normalized final URL
     status: int                  # final status, 100-599 (never a followed redirect)
-    reason: str                  # reason phrase as sent, may be ""
-    headers: Mapping[str, str]   # read-only; see "Response headers"
-    content_type: str | None     # Content-Type value as sent, or None
+    reason: str                  # reason phrase, cleaned (see below), may be ""
+    headers: Mapping[str, str]   # read-only, values cleaned; see "Response headers"
+    content_type: str | None     # cleaned Content-Type value, or None
     media_type: str | None       # "type/subtype" lowercased, or None
     content: bytes               # body after content decoding
     encoded_bytes: int           # body bytes received before content decoding
@@ -101,6 +102,14 @@ class FetchResult:
 details with 404 and 500, and Wikipedia's API returns error bodies; the
 caller decides what to tell the user. The body of a non-2xx response is
 read, limited and decoded like any other.
+
+**Cleaned text.** `http.client` decodes the status line and header
+fields as ISO-8859-1, so a server can put escape sequences or other
+control characters into the reason phrase and header values. `fetch`
+replaces every character outside U+0020 to U+007E in `reason` and in
+each value of `headers` (and so in `content_type` and `media_type`) with
+`?`. Callers can put them in mail without further cleaning. Redirects
+are followed using the raw `Location` value, which the URL rules check.
 
 ### `fetch(url, *, user_agent, ...) -> FetchResult`
 
@@ -134,8 +143,9 @@ cookies, credentials or a request body.
 3. **Address.** An IP-literal host is checked without calling
    `network.resolve`. A name is resolved once, and every address
    returned is checked (`FetchAddressError`). See "Addresses".
-4. **Connect** to a checked address (`FetchConnectError`), then TLS for
-   https (`FetchTLSError`).
+4. **Connect** to a checked address (`FetchConnectError`), refuse a
+   connection to the node itself (`FetchAddressError`), then TLS for
+   https (`FetchTLSError`, or `FetchTimeoutError` for a slow handshake).
 5. **Request and response** (`FetchProtocolError`, `FetchTimeoutError`).
 6. **Redirect** handling, which repeats steps 2 to 5 for the new URL
    (`FetchRedirectError`).
@@ -166,15 +176,29 @@ cookies, credentials or a request body.
 - `max_redirects`: `int` (not `bool`), 0 to 10.
 - `connect_timeout`, `read_timeout`, `total_timeout`: `int` or `float`
   (not `bool`), finite and greater than 0.
-- `ports`: non-empty, each an `int` (not `bool`) from 1 to 65535.
-- `deny_networks`: each accepted by `ipaddress.ip_network(x,
-  strict=False)`.
+- `ports`: an iterable, not a `str` or `bytes`, with at least one item,
+  each an `int` (not `bool`) from 1 to 65535.
+- `deny_networks`: an iterable, not a `str` or `bytes`, each item
+  accepted by `ipaddress.ip_network(x, strict=False)`.
 - `ssl_context`: `None`, or an `ssl.SSLContext` with
-  `check_hostname is True` and `verify_mode == ssl.CERT_REQUIRED`. A
-  weakened context is refused even for http URLs.
+  `check_hostname is True`, `verify_mode == ssl.CERT_REQUIRED`,
+  `minimum_version` equal to `ssl.TLSVersion.TLSv1_2` or
+  `ssl.TLSVersion.TLSv1_3`, and `keylog_filename is None`. A context
+  from `ssl.create_default_context()` has `minimum_version ==
+  TLSVersion.MINIMUM_SUPPORTED` and is refused until the caller sets it.
+  A weakened context is refused even for http URLs.
+
+`ports` and `deny_networks` are each converted to a tuple once, at the
+start of the call, so a one-shot iterator applies to every hop. A bare
+`str` or `bytes` is refused instead of being read one character at a
+time.
 
 `deny_networks` and `ports` can only narrow what is reachable: no
 argument allows an address that `is_public_address` refuses.
+
+No module in `src/` other than `federated_cms/fetch.py` passes
+`network=`; a test checks this. Services always use the system
+network.
 
 ## URLs
 
@@ -289,9 +313,27 @@ refusals.
 
 Within `fetch`, an address is also refused when it falls inside any
 `deny_networks` entry, checked against both the address and, for rules
-1 and 2, the embedded IPv4 address. An operator uses this for the
-node's own public address (a hairpin NAT route back to the router), or
-for `44.0.0.0/8` on a node with an AMPRNet tunnel.
+1 and 2, the embedded IPv4 address. Operator uses:
+
+- The node's own public IPv4 address, when the router forwards it back
+  to the LAN (hairpin NAT).
+- A network-specific NAT64 prefix, when the site runs DNS64 with one.
+  Rule 2 only knows the well-known prefix; addresses under any other
+  prefix are judged as ordinary IPv6 and would reach LAN hosts through
+  the translator.
+- AMPRNet, if the operator does not want requests reaching it. ARDC
+  holds "more than 12 million IP addresses in the 44.0.0.0/9 and
+  44.128.0.0/10 address spaces" (<https://www.ardc.net/about/>). They
+  are globally routed and allowed by default; a node with a 44Connect
+  tunnel reaches them over that tunnel.
+
+**Self-connection.** After each TCP connect, `fetch` compares the
+address it passed to `network.connect` with the local address of the
+returned socket (`sock.getsockname()[0]`). It raises
+`FetchAddressError`, without sending a request or trying another
+address, when they are equal, or when both are IPv6 and share the same
+/64. This stops a request to the node's own public address, or to a
+neighbour on its IPv6 subnet, without a configured list.
 
 **All answers are checked.** If any address returned for a name is
 refused, the whole hop fails with `FetchAddressError` and nothing is
@@ -324,8 +366,9 @@ So:
   that answer, in the order given. If a connection attempt fails, the
   next address is tried; every address was checked, as OWASP asks
   ("Apply the destination policy to retries and fallback connections as
-  well"). When all fail, `FetchConnectError`, including when an attempt
-  timed out. An empty answer, or `OSError` from `resolve`, is
+  well"). Only a failed `network.connect` moves on to the next address.
+  When all fail, `FetchConnectError`, including when an attempt timed
+  out. A TLS failure or a self-connection refusal ends the hop at once. An empty answer, or `OSError` from `resolve`, is
   `FetchConnectError`; a `TimeoutError` from `resolve` is
   `FetchTimeoutError`.
 - The implementation overrides `connect()` of an
@@ -339,10 +382,24 @@ So:
   against the name ("server_hostname specifies the hostname of the
   service which we are connecting to",
   <https://docs.python.org/3/library/ssl.html#ssl.SSLContext.wrap_socket>).
-  For an IP-literal host, `server_hostname` is the IP string. The
-  default context is `ssl.create_default_context()`, which sets
+  For an IP-literal host, `server_hostname` is the IP string, checked
+  against the certificate's IP address entries. The handshake runs with
+  `do_handshake_on_connect=False` and an explicit `do_handshake()` under
+  a timeout of `min(connect_timeout, remaining)`.
+- The default context is `ssl.create_default_context()`, which sets
   `CERT_REQUIRED` and, through `PROTOCOL_TLS_CLIENT`, hostname checking.
-  `ssl.SSLError` and `ssl.CertificateError` become `FetchTLSError`.
+  `fetch` then sets `minimum_version = ssl.TLSVersion.TLSv1_2` and
+  `keylog_filename = None`: `create_default_context` copies the
+  `SSLKEYLOGFILE` environment variable into `keylog_filename`
+  (CPython `Lib/ssl.py`), which would write session keys to disk. The
+  default trust store is OpenSSL's, which reads the `SSL_CERT_FILE` and
+  `SSL_CERT_DIR` environment variables (`ssl.get_default_verify_paths()`
+  reports them as `openssl_cafile_env` and `openssl_capath_env`). Those
+  are the operator's environment, not something a request can change.
+- A handshake that times out raises `FetchTimeoutError`. Any other
+  handshake or certificate failure (`ssl.SSLError`,
+  `ssl.CertificateError`, or `OSError` during the handshake) raises
+  `FetchTLSError`. Neither tries the next address.
 - One connection per hop, closed after the hop. Redirects never reuse a
   connection.
 
@@ -361,6 +418,11 @@ class Network(Protocol):
   occurrence kept. `getaddrinfo` has no timeout, so it runs in a daemon
   thread; if it has not returned within `timeout`, `resolve` raises
   `TimeoutError` and abandons the thread.
+- At most 8 lookup threads may be running at once, across all
+  `SystemNetwork` instances in the process (abandoned ones count until
+  `getaddrinfo` returns). A ninth call raises `OSError` without starting
+  a thread, which `fetch` reports as `FetchConnectError`. This bounds
+  the threads a stuck resolver can pile up.
 - `connect` creates a `socket.socket` of the address's family, sets
   `timeout`, connects to `(address, port)` and returns the socket. It
   does no name resolution.
@@ -415,9 +477,18 @@ percent-encoding kept.
   `http.client` sets one socket timeout per call and reads many times
   inside `HTTPResponse.begin()` and `read()`, so a server that sends one
   byte just inside each read timeout would never time out. Enforce the
-  deadline per receive (for example a socket wrapper that sets
+  deadline per receive (for example a wrapper that sets
   `min(read_timeout, remaining)` before each `recv`) or close the socket
   at the deadline.
+- For https the wrapper or timer must act on the `ssl.SSLSocket`.
+  `SSLContext.wrap_socket` detaches the plain socket (`sock.detach()`
+  in `SSLSocket._create`), so anything wrapped around the plain socket
+  no longer sees the reads.
+- When the time remaining is zero or less, `fetch` raises
+  `FetchTimeoutError` before starting any wait. It never calls
+  `settimeout` with 0 (non-blocking mode) or a negative value (which
+  raises `ValueError`). This applies after a slow `network.resolve` or
+  `network.connect` returns, too.
 
 A read timeout or the total limit raises `FetchTimeoutError`. A
 `FetchTimeoutError` from the total limit is raised no later than about
@@ -428,11 +499,36 @@ A read timeout or the total limit raises `FetchTimeoutError`. A
 `http.client` parses the status line and headers. Its limits (lines of
 65536 bytes, 100 header fields) and any malformed status line, early
 close, bad chunk framing or incomplete body raise `FetchProtocolError`.
-So does a status outside 100 to 599; `http.client` itself accepts up to
-999. A
-`Transfer-Encoding` other than exactly `chunked` (case-insensitive,
-surrounding spaces ignored) is `FetchProtocolError`: `http.client` only
-decodes `chunked`, and would otherwise return chunk framing as content.
+So do:
+
+- A status outside 100 to 599; `http.client` itself accepts up to 999.
+- A final status from 101 to 199. `http.client` skips `100 Continue`
+  responses itself; any other 1xx it would return as the final
+  response.
+- `Transfer-Encoding`, judged on all its field lines joined with `", "`,
+  that is anything other than `chunked` (case-insensitive, surrounding
+  spaces ignored). `http.client` only decodes `chunked`, and would
+  otherwise return chunk framing as content. So `gzip, chunked`, and
+  `chunked` sent twice, are refused.
+- `Transfer-Encoding` and `Content-Length` both present. RFC 9112
+  section 6.3: "Such a message might indicate an attempt to perform
+  request smuggling ... and ought to be handled as an error."
+- An invalid `Content-Length`. All its field lines are split on commas
+  and each element has surrounding spaces and tabs removed; every
+  element must match `[0-9]+` and all must be equal. RFC 9112 section
+  6.3 allows only that case ("unless the field value can be
+  successfully parsed as a comma-separated list ..., all values in the
+  list are valid, and all values in the list are the same"). `5`,
+  `5, 5` and two lines of `5` are accepted; `+5`, `0x5`, `5;x`, `5, 6`
+  and an empty value are not.
+
+**Bytes on the wire.** Every byte read from the socket for a hop counts:
+status line, headers, `1xx` responses that `http.client` skips, chunk
+size lines and extensions, trailers and body. More than
+`max_encoded_bytes + 262144` (256 KiB for framing) raises
+`FetchTooLargeError`. Without this, `http.client` would read up to 100
+header lines of 64 KiB, any number of `100 Continue` responses, and any
+number of trailer lines, none of which count as body.
 
 ### Redirects
 
@@ -503,7 +599,8 @@ lowercased; empty entries and `identity` are ignored.
 - One entry, `deflate`: RFC 9110 section 8.4.1.2 says it is "a "zlib"
   data format [RFC1950] containing a "deflate" compressed data stream",
   and notes "Some non-conformant implementations send the "deflate"
-  compressed data without the zlib wrapper". If the first two body
+  compressed data without the zlib wrapper". The first body bytes are
+  buffered until there are two (a read may return one). If those two
   bytes are a valid zlib header (`b0 & 0x0F == 8` and
   `(b0 * 256 + b1) % 31 == 0`), `wbits=15`; otherwise raw deflate,
   `wbits=-15`. Bytes after the end of the stream are
@@ -535,7 +632,9 @@ service may use. Those belong to the services that call `fetch`.
 ## Tests
 
 `tests/test_fetch.py` runs offline in a few seconds. It starts a plain
-and a TLS server on `127.0.0.1` and passes a fake `Network` whose
+and a TLS server on `127.0.0.1` (the TLS server does each handshake in
+its handler thread with a timeout, so a stalled client cannot block
+later tests) and passes a fake `Network` whose
 resolver answers public-looking addresses (`93.184.215.14`, ...) and
 whose dialer maps them to those servers. An autouse fixture replaces
 `socket.getaddrinfo`, `socket.create_connection` and
@@ -543,6 +642,7 @@ whose dialer maps them to those servers. An autouse fixture replaces
 or dial outside the seam is caught.
 
 The TLS fixtures in `tests/fixtures/fetch/` (a test CA, and a
-certificate for `secure.example` valid until 2126) are made by
+certificate for `secure.example` and IP address `93.184.215.16`, valid
+until 2126) are made by
 `tests/fixtures/fetch/make-certs.sh`. The private keys are test
 material only.

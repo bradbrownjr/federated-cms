@@ -21,7 +21,7 @@ cat > "$tmp/ext.cnf" <<'EXT'
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:secure.example
+subjectAltName=DNS:secure.example,IP:93.184.215.16
 subjectKeyIdentifier=hash
 authorityKeyIdentifier=keyid
 EXT
