@@ -1,0 +1,69 @@
+{
+  "id": "https://api.weather.gov/points/43.623,-70.208",
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [
+      -70.208,
+      43.623
+    ]
+  },
+  "properties": {
+    "@id": "https://api.weather.gov/points/43.623,-70.208",
+    "@type": "wx:Point",
+    "cwa": "GYX",
+    "type": "land",
+    "forecastOffice": "https://api.weather.gov/offices/GYX",
+    "gridId": "GYX",
+    "gridX": 74,
+    "gridY": 56,
+    "forecast": "https://api.weather.gov/gridpoints/GYX/74,56/forecast",
+    "forecastHourly": "https://api.weather.gov/gridpoints/GYX/74,56/forecast/hourly",
+    "forecastGridData": "https://api.weather.gov/gridpoints/GYX/74,56",
+    "observationStations": "https://api.weather.gov/gridpoints/GYX/74,56/stations",
+    "relativeLocation": {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -70.1853051,
+          43.6331574
+        ]
+      },
+      "properties": {
+        "city": "Portland",
+        "state": "ME",
+        "distance": {
+          "unitCode": "wmoUnit:m",
+          "value": 662.2412503446
+        },
+        "bearing": {
+          "unitCode": "wmoUnit:degree_(angle)",
+          "value": 238
+        }
+      }
+    },
+    "forecastZone": "https://api.weather.gov/zones/forecast/MEZ024",
+    "county": "https://api.weather.gov/zones/county/MEC005",
+    "fireWeatherZone": "https://api.weather.gov/zones/fire/MEZ110",
+    "timeZone": "America/New_York",
+    "radarStation": "KGYX",
+    "astronomicalData": {
+      "sunrise": "2026-11-25T06:47:32-05:00",
+      "sunset": "2026-11-25T16:08:11-05:00",
+      "transit": "2026-11-25T11:27:51-05:00",
+      "civilTwilightBegin": "2026-11-25T06:15:56-05:00",
+      "civilTwilightEnd": "2026-11-25T16:39:47-05:00",
+      "nauticalTwilightBegin": "2026-11-25T05:40:34-05:00",
+      "nauticalTwilightEnd": "2026-11-25T17:15:09-05:00",
+      "astronomicalTwilightBegin": "2026-11-25T05:06:17-05:00",
+      "astronomicalTwilightEnd": "2026-11-25T17:49:26-05:00"
+    },
+    "nwr": {
+      "transmitter": "KDO95",
+      "sameCode": "023005",
+      "areaBroadcast": "https://api.weather.gov/radio/KDO95/broadcast",
+      "pointBroadcast": "https://api.weather.gov/points/43.623,-70.208/radio"
+    }
+  }
+}
