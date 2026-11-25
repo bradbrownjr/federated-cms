@@ -248,6 +248,161 @@ every source tagged with it, merged and newest first.
   their fetch time, so a request is answered from the cache, and still
   answered while the Internet link is down, with the age shown.
 
+### `WX [place] [| choice]`
+
+US weather forecasts from the National Weather Service (NWS).
+
+**Place** (the same forms work for `ALERTS`):
+
+| Form | Example | Resolved by |
+| --- | --- | --- |
+| Maidenhead locator, 4 to 8 characters | `WX FN43` | Centre point, via the offline geo module |
+| Latitude, longitude | `WX 43.6,-70.7` | Used as given |
+| NWS zone ID | `WX MEZ023` | Zone forecast endpoint (see below) |
+| Town and state | `WX Waterboro ME` | Local town table |
+| Nothing | `WX` | The sender's last QTH position report |
+
+With no place and no position report on file, the reply says how to send
+a position report or give a place.
+
+**Town table:** built from the USGS GNIS Populated Places file
+(`https://prd-tnm.s3.amazonaws.com/StagedProducts/GeographicNames/Topical/PopulatedPlaces_National_Text.zip`),
+so lookups work offline. USGS data is generally public domain, but the
+file states no licence. UNVERIFIED, confirm before shipping. Several
+matches give a menu.
+
+| Command | Reply |
+| --- | --- |
+| `WX Waterboro ME` | Next three periods, then a menu |
+| `WX FN43 \| FULL` | All 14 periods (about 1,100 characters measured) |
+| `WX FN43 \| ALERTS` | The `ALERTS` reply for the same place |
+
+**Data** (api.weather.gov, see the NWS web service documentation,
+https://www.weather.gov/documentation/services-web-api):
+
+1. `/points/{lat},{lon}` gives the forecast URL, zone and office. Cached
+   24 hours (observed `max-age=86400`).
+2. The forecast URL gives the periods. Cached 1 hour (observed
+   `max-age=3600`).
+3. A zone ID uses `/zones/forecast/{zone}/forecast`. It works, but it is
+   not in the published OpenAPI document, so its stability is UNVERIFIED.
+   The point flow is preferred.
+
+**Reply:** a header with place, office and NWS issue time; the next three
+periods (`detailedForecast`, wrapped); a menu. Layout, from a real
+Waterboro-area response:
+
+```text
+WX 43.6,-70.7 NWS GYX  upd 2026-11-24 19:49 EST
+Zone MEZ018 near Lake Arrowhead ME
+TONIGHT: Clear, low around 17. SW wind 0 to 5 mph.
+WED: Sunny. High near 43, falling to 36 in the afternoon. SE wind
+  around 0 mph.
+WED NIGHT: Partly cloudy, low around 21. NW wind around 0 mph.
+1. Full forecast (14 periods)
+2. Alerts for this place
+```
+
+**Errors:**
+
+- Outside the US the API returns 404 `InvalidPoint` ("Data Unavailable
+  For Requested Point"). The reply says NWS covers the US only.
+- 5xx or timeout: "NWS unavailable, try later", plus the cached forecast
+  with its age if one exists.
+
+**Attribution:** NWS content is public domain, but the NWS disclaimer
+(https://www.weather.gov/disclaimer) forbids presenting modified content
+as official. Replies end with `Source: NWS via <node>` and say the text
+is shortened, not official.
+
+### `ALERTS [place]`
+
+Active NWS watches and warnings. Place forms are the same as for `WX`.
+
+**Data:** the NWS API `/alerts/active` with `point=lat,lon`, `zone=` or
+`area=` (a state). A User-Agent is required ("A User Agent is required to
+identify your application") and the data is "intended to be open data,
+free to use for any purpose" (NWS web service documentation, URL above).
+Cached 5 minutes (observed `Cache-Control: max-age=5` with `Expires`).
+
+| Command | Reply |
+| --- | --- |
+| `ALERTS Waterboro ME` | Count, then one block per alert, then a menu |
+| `ALERTS Waterboro ME \| 2` | Alert 2 in full |
+
+Each block has the event in capitals, severity, issuing office, expiry
+(local time with zone), the first 400 characters or so of the
+description, then `ACTION:` and the instruction (about 150 characters).
+The menu at the end is one line per alert, `ALERTS <place> | <n>`.
+
+With none active, one line:
+
+```text
+ALERTS ME: no active alerts (checked 04:32Z).
+```
+
+Errors and attribution are as for `WX`.
+
+### `SOLAR`
+
+Space weather from NOAA's Space Weather Prediction Center (SWPC). Public
+domain (NWS disclaimer, above). The node fetches about hourly and caches
+each product with its fetch time. SWPC publishes no rate guidance (none
+found).
+
+| Product (under `https://services.swpc.noaa.gov/`) | Gives |
+| --- | --- |
+| `products/summary/10cm-flux.json` | F10.7 flux (SFI) |
+| `products/noaa-planetary-k-index.json` | 3-hour Kp and A |
+| `json/planetary_k_index_1m.json` | Current estimated Kp |
+| `products/noaa-scales.json` | R, S and G scales, now and forecast |
+| `json/goes/primary/xrays-6-hour.json` | X-ray class |
+| `text/3-day-forecast.txt` | Kp forecast |
+
+```text
+SOLAR 2026-11-25 0433Z (data age 12 min)
+SFI 88  SSN 36  A 4  Kp 1.3 (3h max 2)
+X-ray B1.3  Storms now: R0 S0 G0
+Forecast: Kp up to 5 (G1) on Nov 27
+Source: NOAA SWPC
+```
+
+HF band-condition estimates, as on hamqsl.com (N0NBH), are not included
+by default. Their terms are informal ("you must leave the credit ...
+intact"; "hourly updates only"). A sysop may enable them, with the credit
+shown.
+
+### `CALL <callsign>`
+
+Amateur callsign lookup. US callsigns only in this version; others get
+"US callsigns only".
+
+**Data:** the FCC ULS weekly amateur file
+(`https://data.fcc.gov/download/pub/uls/complete/l_amat.zip`, about
+193 MB, observed 2026-11-22) loaded into the node's local database, with
+the daily files applied (`.../daily/l_am_<day>.zip`), so lookups work
+offline. The EN, HD and AM records are joined on the unique system
+identifier. The FCC's terms and its field layout documentation
+(`pa_intro24`) could not be read (HTTP 403). UNVERIFIED.
+
+**Fallback** when the local copy is missing: the callook.info JSON API
+(https://callook.info/api_reference.php), "free to use however you
+wish". It "exclusively contains and serves United States callsign data".
+
+**Privacy:** a reply has name, licence class, status, grant and expiry
+dates, and city and state. Never the street address or FRN. The FCC
+publishes addresses, but a radio reply does not need them.
+
+```text
+W1AW  ARRL HQ OPERATORS CLUB  (club)
+Trustee: AF5ID   Status: active
+Newington, CT
+Granted 2020-12-08  Expires 2031-02-26
+Source: FCC ULS, local copy 2026-11-22
+```
+
+QRZ is not used: its XML data needs a paid subscription.
+
 ## Limits
 
 Set per node, applied per callsign:
@@ -274,3 +429,7 @@ Set per node, applied per callsign:
 - Default rate limits.
 - Whether other services also split long content across messages, as
   `WIKI | FULL` does, or cut it with a note (the extractor cuts today).
+- GNIS licence: the Populated Places file states none (`WX` town table).
+- FCC data terms: the ULS terms and layout documentation were not
+  readable (`CALL`).
+- Whether `ALERTS` should be pushed to subscribers. Not in this design.
