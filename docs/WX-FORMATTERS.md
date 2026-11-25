@@ -142,7 +142,7 @@ Used fields:
 | `forecast.properties.updateTime`, else `generatedAt` (when `updateTime` is absent or `null`) | Issue time | `upd n/a` |
 | `forecast.properties.periods` | A list of objects, kept in the order given | error |
 | period `name` | Clean, upper-cased, must not be empty | error |
-| period `detailedForecast`, else `shortForecast` | The text | `n/a` |
+| period `detailedForecast`, else `shortForecast` when it is absent, null or empty after cleaning | The text | `n/a` |
 | period `endTime` | A period whose `endTime` is at or before `now` is dropped | kept |
 
 Every period is validated, whether or not it is shown or has expired:
