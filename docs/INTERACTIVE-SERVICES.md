@@ -193,18 +193,61 @@ Checked against the live API on 2026-11-25: `Mercury` has
 `action=parse` with `formatversion=2` returns the HTML as a single
 string in `parse.text`.
 
-### `NEWS [source] [topic]`
+### `NEWS [source or topic] [| choice]`
 
-Sysop-chosen RSS and Atom feeds, each with a short name and topics.
+RSS and Atom feeds chosen by the sysop, each with a short name and
+topics. It works like `WIKI`: a short version first, the full text on
+request.
 
-- `NEWS`: a menu of sources and topics.
-- `NEWS <source or topic>`: a menu of headlines (title and date, newest
-  first).
-- A chosen headline: the article fetched from its link and run through
-  the extractor; or the feed's own full text when it carries one.
+| Command | Reply |
+| --- | --- |
+| `NEWS` | Menu of sources and topics |
+| `NEWS BBC` | Menu of headlines, newest first (title and date) |
+| `NEWS BBC \| DIGEST` | Every headline with its summary, in one message |
+| `NEWS BBC \| 3` | Item 3: its summary, then a menu |
+| `NEWS BBC \| 3 FULL` | Item 3: the full article, split across messages |
 
-The feed reader (RSS 2.0 and Atom, RFC 4287) needs its own spec and
-tests before this service.
+`NEWS WEATHER` works the same when `WEATHER` is a topic: headlines from
+every source tagged with it, merged and newest first.
+
+**An item's menu:**
+
+```text
+1. Full article (about 6,000 characters, 1 message)
+2. More from BBC
+```
+
+- **Summary:** the item's `description` (RSS) or `summary` (Atom), as
+  HTML through the extractor. When the feed gives none, the first two
+  paragraphs of the fetched article.
+- **Full article:** the feed's own full text when it carries one
+  (`content:encoded` in RSS, `content` in Atom); otherwise the page at
+  the item's link, fetched and run through the extractor. Split like
+  `WIKI | FULL`, and the size is measured before the menu is sent.
+- **Digest:** suits radio best: every headline in one message, one
+  round trip. The menu numbers in it still work.
+- **Attribution:** each reply names the source and the item's link.
+  Copyright stays with the publisher; the sysop chooses feeds the node
+  may relay.
+
+**Feed reader** (its own module, spec and tests come first):
+
+- RSS 2.0 (rssboard.org specification): channel `title`, `link`,
+  `description`; item `title`, `link`, `description`, `pubDate`
+  (RFC 822 dates, two- or four-digit years), `guid`. "At least one of
+  title or description must be present." Full text in `content:encoded`
+  (namespace `http://purl.org/rss/1.0/modules/content/`).
+- Atom (RFC 4287, namespace `http://www.w3.org/2005/Atom`): entry `id`,
+  `title`, `updated` (RFC 3339) required; `summary`, `content`, and
+  `link rel="alternate"` (an entry without `content` must have one).
+- Untrusted XML: a feed containing `<!DOCTYPE` or `<!ENTITY` is refused
+  before parsing. Feeds have no need for a DTD, and this blocks entity
+  expansion attacks whatever the installed Expat version (Python's XML
+  documentation says Expat below 2.7.2 may be vulnerable). Size is
+  capped after decompression.
+- Feeds are fetched on a schedule set by the sysop and cached with
+  their fetch time, so a request is answered from the cache, and still
+  answered while the Internet link is down, with the age shown.
 
 ## Limits
 
