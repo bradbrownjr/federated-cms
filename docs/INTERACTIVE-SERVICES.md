@@ -91,7 +91,7 @@ Outbox, 2026-11-25; callsign and position replaced here):
 Subject: Re: INQUIRY - <original subject>
 To: SERVICE@winlink.org
 Message-ID: <12 characters>
-X-Location: 43.645833N, 70.708333W (Grid square)
+X-Location: 41.729167N, 72.708333W (Grid square)
 Content-Type: multipart/mixed; boundary="..."
 
   text/plain; charset="iso-8859-1", quoted-printable:
