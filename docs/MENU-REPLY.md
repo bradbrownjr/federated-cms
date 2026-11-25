@@ -28,8 +28,8 @@ class MenuReplyError(ValueError):
   `MenuReplyError`. No other exception may escape (no `RecursionError`,
   `UnicodeError`, `KeyError` or `email` internals).
 - `MenuReplyError(reason)` takes the reason as its only argument.
-- Standard library `email` only; parse with `email.policy.default` so that
-  RFC 2047 encoded words in headers are decoded.
+- Standard library `email` only; parse with `email.policy.compat32` (see below);
+  the Subject's RFC 2047 encoded words are decoded explicitly.
 
 ## What is read, in order
 
