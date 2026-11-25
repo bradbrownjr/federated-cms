@@ -111,8 +111,20 @@ url_items = true                  # http(s) lines in INQUIRY
 deny_networks = []                # passed to fetch(), e.g. the node's public IP
 blocked = []                      # callsigns whose requests are ignored
 
-[limits]                          # section 6
+[limits]                          # section 6; every key optional
+items_per_request = 32
+requests_per_hour = 10
 messages_per_day = 100
+bytes_per_day = 1_000_000
+parts_per_item = 12
+invalid_per_day = 5
+undelivered_max = 100
+node_fetches_per_hour = 600       # all accounts together
+node_bytes_per_day = 5_000_000
+
+[limits.accounts.N0EOC]           # per-callsign override, e.g. a served agency
+messages_per_day = 300
+bytes_per_day = 3_000_000
 
 [catalog]
 file = "catalog.tsv"
@@ -437,15 +449,21 @@ Counted per B2F account in UTC windows from the robot's own tables, so
 there is no separate counter to drift. Defaults were chosen on 2026-11-25
 and are to be revisited after lab measurement.
 
-| Limit | Default | Counted from | Checked |
+| Limit (`[limits]` key) | Default | Counted from | Checked |
 | --- | --- | --- | --- |
-| Items per request | 32 | Parser (`INQUIRY-ADAPTER.md:56-58`); menu selections | Parse |
-| Requests per hour | 10 | `robot_inbox`, rolling 60 min | Parse, before any item |
-| Messages per day | 100 | `robot_replies` since 00:00 UTC | Before fetching, and at reply commit |
-| Bytes per day | 1,000,000 | `robot_replies.body_bytes` since 00:00 UTC | Reply commit |
-| Parts per item | 12 | Parts of one item | Reply build |
-| Invalid requests per day | 5 | Error replies for bad messages | Parse |
-| Undelivered replies | 100 | `delivered=0` outbox rows | Parse |
+| Items per request (`items_per_request`) | 32 | Parser (`INQUIRY-ADAPTER.md:56-58`); menu selections | Parse |
+| Requests per hour (`requests_per_hour`) | 10 | `robot_inbox`, rolling 60 min | Parse, before any item |
+| Messages per day (`messages_per_day`) | 100 | `robot_replies` since 00:00 UTC | Before fetching, and at reply commit |
+| Bytes per day (`bytes_per_day`) | 1,000,000 | `robot_replies.body_bytes` since 00:00 UTC | Reply commit |
+| Parts per item (`parts_per_item`) | 12 | Parts of one item | Reply build |
+| Invalid requests per day (`invalid_per_day`) | 5 | Error replies for bad messages | Parse |
+| Undelivered replies (`undelivered_max`) | 100 | `delivered=0` outbox rows | Parse |
+
+Every value is set by the sysop in `[limits]`; a key left out keeps its
+default. `[limits.accounts.<CALL>]` overrides any of the per-callsign keys
+for one account (for example a served agency's tactical account). Values
+must be positive integers; anything else stops the robot at start, like
+any config error. `items_per_request` cannot exceed the parser's 32.
 
 Every message counts: each part of a split article and each error reply.
 
@@ -484,7 +502,7 @@ further bad messages that day get no reply.
 
 - `blocked` accounts: requests `ignored`, no reply.
 - Node-wide caps across all accounts, fetches per hour and reply bytes
-  per day (proposed 600 and 5 MB), so many accounts together cannot make
+  per day (`node_fetches_per_hour`, `node_bytes_per_day`; defaults 600 and 5 MB), so many accounts together cannot make
   the node a relay. When reached, demand fetches wait and stale data is
   served where allowed.
 - `url_items = false` limits the node to the catalog and services the
