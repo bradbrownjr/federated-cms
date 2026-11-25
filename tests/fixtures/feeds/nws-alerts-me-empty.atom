@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:cap="urn:oasis:names:tc:emergency:cap:1.2">
+    <id>https://api.weather.gov/alerts.atom?area%5B0%5D=ME&amp;active=1</id>
+    <generator>NWS CAP Server</generator>
+    <updated>2026-11-25T03:34:51+00:00</updated>
+    <author>
+        <name>w-nws.webmaster@noaa.gov</name>
+    </author>
+    <title>Current watches, warnings, and advisories for Maine</title>
+    <link rel="self" href="https://api.weather.gov/alerts.atom?area%5B0%5D=ME&amp;active=1"/>
+</feed>
