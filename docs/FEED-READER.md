@@ -150,7 +150,7 @@ The feed's `title` and `link`, and for each `entry`:
 
 | `type` | Body | As a title |
 | --- | --- | --- |
-| absent, `text`, or `text/*` | character data, `is_html=False` | as is |
+| absent, `text`, or `text/*` other than `text/html` | character data, `is_html=False` | as is |
 | `html` or `text/html` | character data (escaped HTML, decoded once), `is_html=True` | tags removed, references decoded, text inside `script` and `style` dropped |
 | `xhtml` or `application/xhtml+xml` | character data of all descendants, `is_html=False` | the same, text inside XHTML `script` and `style` dropped |
 | anything else | `None` | `None` |
@@ -173,8 +173,9 @@ Never raises.
    `EST`, numeric offsets. RSS 2.0 requires this format and allows a
    two-digit year.
 3. Otherwise ISO 8601 / RFC 3339 (`datetime.fromisoformat`): `Z` or an
-   offset, or a date alone. Atom requires RFC 3339; its `T` and `Z`
-   may be lowercase (RFC 3339 5.6).
+   offset, or a date alone. Atom requires RFC 3339 with an uppercase `T`
+   and `Z` (RFC 4287 3.3); lowercase is accepted anyway, as RFC 3339 5.6
+   allows it.
 4. A result without a zone (or with RFC 2822's `-0000`) is taken as UTC.
    A result with one is converted to UTC.
 

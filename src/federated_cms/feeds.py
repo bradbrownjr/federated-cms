@@ -11,6 +11,7 @@ from xml.parsers import expat
 ATOM = "http://www.w3.org/2005/Atom "
 CONTENT = "http://purl.org/rss/1.0/modules/content/ "
 DC = "http://purl.org/dc/elements/1.1/ "
+XHTML = "http://www.w3.org/1999/xhtml "
 
 
 class FeedError(ValueError):
@@ -51,7 +52,7 @@ def parse_date(value: str) -> datetime | None:
         try:
             result = parsedate_to_datetime(value)
         except (ValueError, TypeError, OverflowError):
-            result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            result = datetime.fromisoformat(value.replace("z", "Z").replace("Z", "+00:00"))
         if result.tzinfo is None:
             result = result.replace(tzinfo=timezone.utc)
         return result.astimezone(timezone.utc)
@@ -69,13 +70,25 @@ def _title(value: str | None) -> str | None:
     return " ".join(value.split()) or None if value else None
 
 
-def _link(value: str | None, base: str) -> str | None:
+def _link(value: str | None, base: str, *, absolute: bool = False) -> str | None:
     """Resolve a link and accept only absolute HTTP(S) URLs."""
-    if not value:
+    value = value.strip() if value else ""
+    if not value or any(ord(c) < 32 or ord(c) == 127 or c.isspace() for c in value):
         return None
-    result = urljoin(base, value)
-    parts = urlsplit(result)
-    return result if parts.scheme.lower() in ("http", "https") and parts.netloc else None
+    try:
+        original = urlsplit(value)
+        if absolute and not original.scheme:
+            return None
+        if original.scheme and not original.hostname:
+            return None
+        result = urljoin(base, value)
+        parts = urlsplit(result)
+        if (parts.scheme.lower() in ("http", "https") and parts.hostname
+                and parts.username is None and parts.password is None):
+            return result
+    except (ValueError, TypeError):
+        pass
+    return None
 
 
 class _HTMLText(HTMLParser):
@@ -84,9 +97,19 @@ class _HTMLText(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts = []
+        self.hidden = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self.hidden += 1
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style") and self.hidden:
+            self.hidden -= 1
 
     def handle_data(self, data):
-        self.parts.append(data)
+        if not self.hidden:
+            self.parts.append(data)
 
 
 def _construct(entry: tuple[str | None, dict] | None) -> Body | None:
@@ -110,6 +133,8 @@ def _atom_title(entry: tuple[str | None, dict] | None) -> str | None:
     if body is None:
         return None
     value = body.value
+    if entry[1].get("type", "text").lower() in ("xhtml", "application/xhtml+xml"):
+        value = entry[1].get("_title_text", value)
     if body.is_html:
         parser = _HTMLText()
         parser.feed(value)
@@ -133,7 +158,7 @@ def _body(fields: dict, name: str) -> Body | None:
 def _atom_link(fields: dict, base: str) -> str | None:
     """Choose an alternate Atom link in document order."""
     links = fields.get("links", [])
-    preferred = [attrs for attrs in links if attrs.get("type", "").lower() in
+    preferred = [attrs for attrs in links if attrs.get("type", "").strip().lower() in
                  ("text/html", "application/xhtml+xml")]
     chosen = preferred[0] if preferred else (links[0] if links else None)
     return _link(_clean(chosen.get("href", "")), base) if chosen is not None else None
@@ -149,9 +174,7 @@ def _item(kind: str, fields: dict, base: str) -> Item | None:
         link = _link(_value(fields, "link"), base)
         guid = fields.get("guid")
         if not _value(fields, "link") and identifier and guid[1].get("isPermaLink", "").lower() != "false":
-            parts = urlsplit(identifier)
-            if parts.scheme.lower() in ("http", "https") and parts.netloc:
-                link = identifier
+            link = _link(identifier, base, absolute=True)
         dates = (_value(fields, "pubDate"), _value(fields, DC + "date"))
     else:
         title = _atom_title(fields.get(ATOM + "title"))
@@ -175,12 +198,15 @@ class _Frame:
     attrs: dict = field(default_factory=dict)
     fields: dict = field(default_factory=dict)
     text: list[str] = field(default_factory=list)
+    title_text: list[str] = field(default_factory=list)
 
 
 def parse_feed(data: bytes, *, url: str, max_bytes: int = 2_000_000,
                max_items: int = 200) -> Feed:
     """Parse a bounded RSS or Atom document without resolving entities."""
     try:
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise FeedError("Feed data must be bytes-like")
         if len(data) > max_bytes:
             raise FeedError("Feed exceeds size limit")
         stack: list[_Frame] = []
@@ -190,16 +216,19 @@ def parse_feed(data: bytes, *, url: str, max_bytes: int = 2_000_000,
         channel_seen = False
         truncated = False
         capture: _Frame | None = None
+        hidden = 0
 
         rss_fields = {"title", "link", "guid", "pubDate", "description", CONTENT + "encoded", DC + "date"}
         atom_fields = {ATOM + name for name in ("title", "id", "published", "updated", "summary", "content")}
 
         def start(name, attrs):
-            nonlocal kind, channel_seen, capture
+            nonlocal kind, channel_seen, capture, hidden
             if len(stack) >= 100:
                 raise FeedError("Feed exceeds nesting limit")
             parent = stack[-1] if stack else None
             frame = _Frame(name)
+            if capture is not None and (hidden or name in (XHTML + "script", XHTML + "style")):
+                hidden += 1
             if parent is None:
                 if name == "rss":
                     kind = "rss"
@@ -223,18 +252,25 @@ def parse_feed(data: bytes, *, url: str, max_bytes: int = 2_000_000,
                     frame.attrs = attrs
                     capture = frame
                 elif kind == "atom" and name == ATOM + "link":
-                    if attrs.get("rel", "alternate") == "alternate":
+                    if attrs.get("rel", "alternate").strip().lower() in (
+                            "alternate", "http://www.iana.org/assignments/relation/alternate"):
                         parent.fields.setdefault("links", []).append(attrs)
             stack.append(frame)
 
         def characters(text):
             if capture is not None:
                 capture.text.append(text)
+                if not hidden:
+                    capture.title_text.append(text)
 
         def end(name):
-            nonlocal capture, truncated
+            nonlocal capture, truncated, hidden
             frame = stack.pop()
+            if hidden:
+                hidden -= 1
             if frame.role == "field":
+                if name == ATOM + "title":
+                    frame.attrs["_title_text"] = "".join(frame.title_text)
                 stack[-1].fields.setdefault(name, (_clean("".join(frame.text)), frame.attrs))
                 capture = None
             elif frame.role == "item":
