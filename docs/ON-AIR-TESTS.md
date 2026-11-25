@@ -12,13 +12,17 @@ its result into the document it names and delete it here.
 with no relay changing it. Express accepted that identifier before, but
 only through the relay. This checks the direct path on the air.
 
-**Needs:** the radio room PC with its radio and KISS modem; Express on a
-second computer with its own radio and TNC; the lab database and lab
+**Needs:** the lab host (the Debian LXC that runs the B2F server and
+bridge); soundmodem on the radio room PC, reached from the lab host as
+TCP KISS over the network, with the radio room radio; Express on the
+Surface Book with its own radio and TNC; the lab database and lab
 password file; synthetic messages only.
 
-1. On the radio room PC, update to `main` (`git pull`). Set `PYTHONPATH`
-   to this repository's `src` and the kissterm checkout (`;` between them
-   on Windows).
+Steps 1 to 4 and 7 run on the lab host. Claude can run them there when
+you say you are at the radios; you keep control of both transmitters.
+
+1. Update the lab host's checkout to `main`. Set `PYTHONPATH` to this
+   repository's `src` and the kissterm checkout.
 2. Queue a synthetic download: run the seeding snippet in
    [TCP-KISS-B2F-LAB.md](TCP-KISS-B2F-LAB.md) ("Operator-controlled use").
    Note the message ID it prints.
@@ -26,11 +30,14 @@ password file; synthetic messages only.
    ```text
    python -m federated_cms.b2f --port 63191 --lab-account LAB_ACCOUNT --password-file LAB_PASSWORD_FILE --database LAB_DATABASE
    ```
-4. In another window, start the bridge:
+4. In another window, start the bridge, pointing `MODEM_HOST` and
+   `MODEM_PORT` at soundmodem's KISS port on the radio room PC:
    ```text
    python -m federated_cms.kiss_lab --kiss-host MODEM_HOST --kiss-port MODEM_PORT --station STATION_CALL --peer CLIENT_CALL --b2f-port 63191 --ack-delay 1 --enable-tx
    ```
-5. In Express: Packet Winlink session, TNC model `ACKMODE`, lab password
+   Running it first with `--check-only` instead of `--enable-tx` checks
+   the network path to soundmodem without arming transmit.
+5. On the Surface Book, in Express: Packet Winlink session, TNC model `ACKMODE`, lab password
    in a profile you will reset afterwards. Put one message with two
    small synthetic attachments in the Outbox.
 6. Connect directly to the lab station. Low power, antennas apart.
