@@ -5,6 +5,7 @@ These tests define the behaviour of federated_cms.inquiry. Do not change them
 to make an implementation pass.
 """
 from datetime import datetime, timezone
+import math
 import unittest
 
 from federated_cms.inquiry import (
@@ -217,7 +218,7 @@ class PositionReportTests(unittest.TestCase):
             "DATE: 2026/01/02 03:04\nSPEED: -1\n",
             "DATE: 2026/01/02 03:04\nDATE: 2026/01/02 03:05\n",     # duplicate key
             "DATE: 2026/01/02 03:04\nCOMMENT: " + "x" * 81 + "\n",
-            "DATE: 2026/01/02 03:04\n" + "COMMENT: x\n" * 2000,     # over 8192 bytes
+            "DATE: 2026/01/02 03:04\n" + "".join(f"K{n}: x\n" for n in range(2000)),  # over 8192 bytes, distinct unknown keys
         ]
         for body in bad:
             with self.subTest(body=body[:60]):
@@ -227,6 +228,218 @@ class PositionReportTests(unittest.TestCase):
     def test_comment_of_80_characters_allowed(self):
         report = parse_position_report("DATE: 2026/01/02 03:04\nCOMMENT: " + "x" * 80 + "\n")
         self.assertEqual(len(report.comment), 80)
+
+
+DATE_LINE = "DATE: 2026/01/02 03:04\n"
+
+
+class AddressHardeningTests(unittest.TestCase):
+    def test_non_ascii_local_part_matches_nothing(self):
+        # str.upper() maps dotless i, long s and sharp s into ASCII; matching must not.
+        for address in ("\u0131nquiry@x", "\u0131NQUIRY", "\u017fMTP:inquiry@x",
+                        "\uff29\uff2e\uff31\uff35\uff29\uff32\uff39", "INQUIRY\u200b@x",
+                        "INQUIRY\u0131@x"):
+            with self.subTest(address=address):
+                self.assertIsNone(service_for(address))
+
+    def test_non_matching_forms_stay_unmatched(self):
+        for address in ("INQUIRY.X@x", '"INQUIRY"@x', "Name <INQUIRY@x>",
+                        "INQUIRY <bob@x>", "<INQUIRY@x>", "INQUIRY\x00@x", "SMTP:SMTP:INQUIRY"):
+            with self.subTest(address=address):
+                self.assertIsNone(service_for(address))
+
+    def test_smtp_prefix_and_whitespace_still_match(self):
+        self.assertEqual(service_for("SMTP:INQUIRY@winlink.org"), "INQUIRY")
+        self.assertEqual(service_for(" smtp: qth "), "QTH")
+
+
+class InquiryHardeningTests(unittest.TestCase):
+    def kinds(self, request):
+        return [(item.kind, item.value) for item in request.items]
+
+    def test_lone_surrogate_raises_inquiry_error(self):
+        for subject, body in (("REQUEST", "\ud800"), ("REQUEST", "PROP_WWV\n\udfff"),
+                              ("\ud800", "PROP_WWV"), ("REQUEST", "A" * 9000 + "\ud800")):
+            with self.subTest(subject=subject, body=body[-10:]):
+                with self.assertRaises(InquiryError):
+                    parse_inquiry(subject, body)
+
+    def test_non_ascii_subject_raises(self):
+        for subject in ("REQUE\u017fT", "\uff32\uff25\uff31\uff35\uff25\uff33\uff34", "REQUEST\u200b"):
+            with self.subTest(subject=subject):
+                with self.assertRaises(InquiryError):
+                    parse_inquiry(subject, "PROP_WWV")
+
+    def test_multibyte_body_size_is_counted_in_bytes(self):
+        # 6 ASCII bytes + 2 bytes per character.
+        parse_inquiry("REQUEST", "LIST\n;" + "\u00e9" * 4093)  # exactly 8192 bytes
+        with self.assertRaises(InquiryError):
+            parse_inquiry("REQUEST", "LIST\n;" + "\u00e9" * 4094)  # 8194 bytes, 4100 characters
+
+    def test_leading_bom_removed(self):
+        self.assertEqual(self.kinds(parse_inquiry("REQUEST", "\ufeffPROP_WWV\r\nLIST")),
+                         [("catalog", "PROP_WWV"), ("list", "LIST")])
+        with self.assertRaises(InquiryError):
+            parse_inquiry("REQUEST", "\ufeff")
+        # Only a leading mark is removed.
+        request = parse_inquiry("REQUEST", "PROP_WWV\n\ufeffLIST")
+        self.assertEqual(self.kinds(request), [("catalog", "PROP_WWV")])
+        self.assertEqual([r.line_number for r in request.rejected], [2])
+
+    def test_non_ascii_item_lines_rejected(self):
+        lines = ["l\u0131st", "pub_p\u0131cket", "PUB\u00dfX", "http\u017f://x.org/y",
+                 "\uff30\uff35\uff22", "PROP_WWV\u200b", "https://example.org/caf\u00e9"]
+        request = parse_inquiry("REQUEST", "\n".join(lines))
+        self.assertEqual(request.items, ())
+        self.assertEqual([r.line_number for r in request.rejected], list(range(1, len(lines) + 1)))
+        self.assertTrue(all(r.reason == "invalid item" for r in request.rejected))
+
+    def test_url_semicolon_without_preceding_whitespace_is_part_of_url(self):
+        request = parse_inquiry("REQUEST", "https://x.org/a;b=1\nhttp://x.org/p;q;r")
+        self.assertEqual(self.kinds(request), [("url", "https://x.org/a;b=1"), ("url", "http://x.org/p;q;r")])
+
+    def test_url_semicolon_after_whitespace_starts_comment(self):
+        for line in ("https://x.org/a ;note", "https://x.org/a\t; note", "https://x.org/a  ;"):
+            with self.subTest(line=line):
+                self.assertEqual(self.kinds(parse_inquiry("REQUEST", line)), [("url", "https://x.org/a")])
+        request = parse_inquiry("REQUEST", "https://x.org/a;b=1 ; note")
+        self.assertEqual(self.kinds(request), [("url", "https://x.org/a;b=1")])
+
+    def test_semicolon_outside_urls_still_comment(self):
+        request = parse_inquiry("REQUEST", "PROP_WWV;x\nLIST;")
+        self.assertEqual(self.kinds(request), [("catalog", "PROP_WWV"), ("list", "LIST")])
+        self.assertEqual(request.rejected, ())
+
+    def test_control_characters_reject_line_and_are_masked(self):
+        cases = {
+            "PROP\x00WWV": "PROP?WWV",
+            "\x00PROP_WWV": "?PROP_WWV",
+            "https://a/\x00b": "https://a/?b",
+            "PROP_WWV\x1b[31m": "PROP_WWV?[31m",
+            "PROP\x7fWWV": "PROP?WWV",
+            "\x1fPROP_WWV": "?PROP_WWV",
+        }
+        for line, shown in cases.items():
+            with self.subTest(line=line):
+                request = parse_inquiry("REQUEST", line)
+                self.assertEqual(request.items, ())
+                self.assertEqual(len(request.rejected), 1)
+                self.assertEqual(request.rejected[0].reason, "invalid item")
+                self.assertEqual(request.rejected[0].text, shown)
+
+    def test_rejected_text_masks_controls_and_stays_within_80(self):
+        request = parse_inquiry("REQUEST", "\x01" * 200)
+        self.assertEqual(request.rejected[0].text, "?" * 80)
+
+    def test_tab_is_whitespace_not_a_control_error(self):
+        self.assertEqual(self.kinds(parse_inquiry("REQUEST", "\tPROP_WWV\t")), [("catalog", "PROP_WWV")])
+
+    def test_repeats_after_item_cap_are_dropped_silently(self):
+        body = "\n".join([f"ITEM_{n}" for n in range(32)] + ["ITEM_0", "item_31", "ITEM_32"])
+        request = parse_inquiry("REQUEST", body)
+        self.assertEqual(len(request.items), 32)
+        self.assertEqual([(r.line_number, r.reason) for r in request.rejected], [(35, "too many items")])
+
+
+class PositionReportHardeningTests(unittest.TestCase):
+    def coords(self, lat, lon):
+        report = parse_position_report(f"{DATE_LINE}LATITUDE: {lat}\nLONGITUDE: {lon}\n")
+        return report.latitude, report.longitude
+
+    def assertInvalid(self, body):
+        with self.assertRaises(PositionReportError):
+            parse_position_report(body)
+
+    def test_lone_surrogate_raises_position_report_error(self):
+        for body in (DATE_LINE + "COMMENT: \ud800", "\udfff", DATE_LINE + "X: " + "a" * 9000 + "\ud800"):
+            with self.subTest(body=body[-10:]):
+                self.assertInvalid(body)
+
+    def test_multibyte_body_size_is_counted_in_bytes(self):
+        # DATE line is 23 bytes, "X: " 3, then 2 bytes per character.
+        parse_position_report(DATE_LINE + "X: " + "\u00e9" * 4083)  # exactly 8192 bytes
+        self.assertInvalid(DATE_LINE + "X: " + "\u00e9" * 4084)  # 8194 bytes, 4110 characters
+
+    def test_leading_bom_removed(self):
+        report = parse_position_report("\ufeff" + DATE_LINE)
+        self.assertEqual(report.date, datetime(2026, 1, 2, 3, 4, tzinfo=timezone.utc))
+
+    def test_non_ascii_letters_do_not_fold_to_ascii(self):
+        # Long s must not read as S, dotless i must not read as I in keys.
+        self.assertInvalid(DATE_LINE + "LATITUDE: 43-35.4120\u017f\nLONGITUDE: 070-44.2380W\n")
+        self.assertInvalid(DATE_LINE + "LATIT\u0131UDE: 43-35.4120N\nLONGITUDE: 070-44.2380W\n")
+        self.assertInvalid(DATE_LINE + "LATITUDE: \uff14\uff13-35.4120N\nLONGITUDE: 070-44.2380W\n")
+
+    def test_non_ascii_comment_is_kept(self):
+        self.assertEqual(parse_position_report(DATE_LINE + "COMMENT: Qu\u00e9bec\n").comment, "Qu\u00e9bec")
+
+    def test_unknown_keys_ignored_even_when_repeated(self):
+        report = parse_position_report(DATE_LINE + "Re: a\nRe: b\nGRID: x\ngrid: y\nhttp://a\nhttp://b\n")
+        self.assertIsNone(report.latitude)
+
+    def test_repeated_known_keys_rejected(self):
+        for key, value in (("DATE", "2026/01/02 03:05"), ("date", "2026/01/02 03:05"),
+                           ("COMMENT", "again"), ("SPEED", "1"), ("COURSE", "1T"),
+                           ("LATITUDE", "43-35.4120N"), ("LONGITUDE", "070-44.2380W")):
+            with self.subTest(key=key):
+                body = (DATE_LINE + "LATITUDE: 43-35.4120N\nLONGITUDE: 070-44.2380W\nSPEED: 1\n"
+                        "COURSE: 1T\nCOMMENT: x\n" + f"{key}: {value}\n")
+                self.assertInvalid(body)
+
+    def test_speed_must_be_finite_and_at_most_10000(self):
+        for value in ("0", "4.5", "10000", "10000.0"):
+            with self.subTest(value=value):
+                self.assertEqual(parse_position_report(DATE_LINE + f"SPEED: {value}\n").speed, float(value))
+        for value in ("10000.0001", "10001", "9" * 400, "1" + "0" * 300, "inf", "nan", "\u0661"):
+            with self.subTest(value=value[:20]):
+                self.assertInvalid(DATE_LINE + f"SPEED: {value}\n")
+
+    def test_minutes_accept_one_to_four_decimals(self):
+        for lat, lon, expected in (("43-35.4N", "070-44.2W", (43 + 35.4 / 60, -(70 + 44.2 / 60))),
+                                   ("43-35.41N", "070-44.23W", (43 + 35.41 / 60, -(70 + 44.23 / 60))),
+                                   ("43-35.412N", "070-44.238W", (43 + 35.412 / 60, -(70 + 44.238 / 60)))):
+            with self.subTest(lat=lat):
+                got = self.coords(lat, lon)
+                self.assertAlmostEqual(got[0], expected[0], places=6)
+                self.assertAlmostEqual(got[1], expected[1], places=6)
+        for lat in ("43-35N", "43-35.N", "43-35.41234N"):
+            with self.subTest(lat=lat):
+                self.assertInvalid(f"{DATE_LINE}LATITUDE: {lat}\nLONGITUDE: 070-44.2380W\n")
+
+    def test_range_boundaries(self):
+        self.assertEqual(self.coords("90-00.0000N", "180-00.0000E"), (90.0, 180.0))
+        self.assertEqual(self.coords("90-00.0000S", "180-00.0000W"), (-90.0, -180.0))
+        for lat, lon in (("90-00.0001N", "000-00.0000E"), ("90-00.0001S", "000-00.0000E"),
+                         ("00-00.0000N", "180-00.0001E"), ("00-00.0000N", "180-00.0001W"),
+                         ("91-00.0000N", "000-00.0000E"), ("00-00.0000N", "181-00.0000E")):
+            with self.subTest(lat=lat, lon=lon):
+                self.assertInvalid(f"{DATE_LINE}LATITUDE: {lat}\nLONGITUDE: {lon}\n")
+
+    def test_minutes_below_60_accepted_60_invalid_except_zero_carry(self):
+        lat, lon = self.coords("43-59.9999N", "070-59.9999W")
+        self.assertAlmostEqual(lat, 43 + 59.9999 / 60, places=9)
+        self.assertAlmostEqual(lon, -(70 + 59.9999 / 60), places=9)
+        for bad in ("43-60.0001N", "43-61.0000N", "43-60.0010N", "43-99.9999N"):
+            with self.subTest(lat=bad):
+                self.assertInvalid(f"{DATE_LINE}LATITUDE: {bad}\nLONGITUDE: 070-44.2380W\n")
+
+    def test_sixty_minutes_with_zero_decimals_carries_to_next_degree(self):
+        # wl2k-go formats minutes with %07.4f, so 59.99996 is written as 60.0000.
+        self.assertEqual(self.coords("43-60.0000N", "070-60.0000W"), (44.0, -71.0))
+        self.assertEqual(self.coords("43-60.0S", "070-60.00E"), (-44.0, 71.0))
+        self.assertEqual(self.coords("89-60.0000N", "179-60.0000E"), (90.0, 180.0))
+        for lat, lon in (("90-60.0000N", "000-00.0000E"), ("00-00.0000N", "180-60.0000E"),
+                         ("00-60.0000 ", "000-00.0000 ")):  # carry makes it nonzero, so a hemisphere is needed
+            with self.subTest(lat=lat, lon=lon):
+                self.assertInvalid(f"{DATE_LINE}LATITUDE: {lat}\nLONGITUDE: {lon}\n")
+
+    def test_zero_is_never_negative_zero(self):
+        for lat, lon in (("00-00.0000S", "000-00.0000W"), ("00-00.0000N", "000-00.0000E"),
+                         ("00-00.0000 ", "000-00.0000 "), ("00-00.0S", "000-00.0W")):
+            with self.subTest(lat=lat):
+                for value in self.coords(lat, lon):
+                    self.assertEqual(value, 0.0)
+                    self.assertEqual(math.copysign(1.0, value), 1.0)
 
 
 if __name__ == "__main__":

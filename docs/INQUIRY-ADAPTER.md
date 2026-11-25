@@ -12,6 +12,14 @@ The domain is ignored and optional. `INQUIRY`, `INQUIRY@winlink.org` and
 `SMTP:` (used in B2 `To:` headers) is removed first. Matching is
 case-insensitive on the whole local part.
 
+- Matching is ASCII only. Upper-casing applies to ASCII letters alone, and a
+  local part or `SMTP:` prefix containing any non-ASCII character (dotless
+  `ı`, long `ſ`, fullwidth letters) matches nothing: `service_for` returns
+  `None`.
+- `service_for` and `address_local_part` take one address. The caller splits
+  recipient lists and strips display names; text such as `Name <INQUIRY@x>`,
+  `"INQUIRY"@x` or `INQUIRY.X@x` is not the local part `INQUIRY`.
+
 | Local part | Service | Source |
 | --- | --- | --- |
 | `INQUIRY` | Catalog requests | Winlink FAQ Q820, Q830 (pp. 46–47) |
@@ -21,21 +29,33 @@ case-insensitive on the whole local part.
 
 ## Catalog request (`INQUIRY`)
 
-- Subject: `REQUEST`, case-insensitive, surrounding whitespace ignored. A
-  leading `//WL2K ` is tolerated. Anything else is an `InquiryError`.
-- Body: at most 8192 UTF-8 bytes. One item per line; CRLF, LF or CR. Leading
-  and trailing whitespace is ignored, blank lines are skipped, and `;` starts
-  a comment to the end of the line.
+- Subject: `REQUEST`, case-insensitive (ASCII only), surrounding whitespace
+  ignored. A leading `//WL2K ` is tolerated. Anything else, including any
+  non-ASCII subject or one containing a lone surrogate, is an `InquiryError`.
+- Body: at most 8192 UTF-8 bytes. The check compares the character count
+  first and never raises anything but `InquiryError`; a body containing a lone
+  surrogate is an `InquiryError`. A leading U+FEFF (byte order mark) is
+  removed before parsing. One item per line; CRLF, LF or CR. Leading and
+  trailing whitespace is ignored and blank lines are skipped.
+- Comments: `;` starts a comment to the end of the line. On a line that
+  starts with `http://` or `https://`, `;` starts a comment only when
+  preceded by whitespace, so `https://x.org/a;b=1` is one URL.
 - Item kinds:
   - `LIST` → kind `list`; `UPDATE_CAT` → kind `update_catalog`.
-  - A line starting with `http://` or `https://` (any case) → kind `url`,
-    original case kept. No whitespace; at most 2048 characters.
-  - Otherwise a catalog ID `[A-Z0-9][A-Z0-9_.-]{0,63}` after upper-casing →
-    kind `catalog`. Examples: `PROP_WWV`, `PUB_PACKET`, `FZAK51.PAFC`,
-    `USWXRAD.GIF`.
+  - A line starting with `http://` or `https://` (any case, ASCII only, so
+    `httpſ://` is not a URL) → kind `url`, original case kept. No whitespace;
+    at most 2048 characters.
+  - Otherwise a catalog ID `[A-Z0-9][A-Z0-9_.-]{0,63}` after ASCII
+    upper-casing → kind `catalog`. Examples: `PROP_WWV`, `PUB_PACKET`,
+    `FZAK51.PAFC`, `USWXRAD.GIF`.
 - A line that fits none of these is reported in `rejected` with reason
-  `invalid item`; parsing continues. Repeated items are kept once. After 32
-  accepted items, further items are rejected with reason `too many items`.
+  `invalid item`; parsing continues. This includes any line containing a
+  non-ASCII character (`lıst`, `PUBßX`) and any line containing a control
+  character (C0 other than tab, or DEL). In `RejectedLine.text`, control
+  characters are replaced with `?` so replies never echo them.
+- Repeated items are kept once. After 32 accepted items, further items are
+  rejected with reason `too many items`; a repeat of an accepted item is
+  still dropped silently.
 - A body with no items and no rejected lines is an `InquiryError`.
 
 `;` handling and case-insensitive IDs come from user reports, not Winlink
@@ -112,21 +132,35 @@ use plain ASCII where possible so the charset mismatch cannot occur.
 ## Position report (`QTH`)
 
 Body layout written by wl2k-go (`catalog/position_report.go`, commit
-`1d59b0a`), one `KEY: value` per line, keys case-insensitive, at most 8192
-bytes:
+`1d59b0a`), one `KEY: value` per line, keys case-insensitive (ASCII only),
+at most 8192 bytes. The size check compares the character count first and
+never raises anything but `PositionReportError`; a body containing a lone
+surrogate is a `PositionReportError`. A leading U+FEFF is removed.
 
 | Key | Format | Required |
 | --- | --- | --- |
 | `DATE` | `YYYY/MM/DD HH:MM`, UTC | yes |
-| `LATITUDE` | `DD-MM.mmmm` + `N`/`S` | with `LONGITUDE` |
-| `LONGITUDE` | `DDD-MM.mmmm` + `E`/`W` | with `LATITUDE` |
-| `SPEED` | non-negative decimal (unit unspecified) | no |
+| `LATITUDE` | `DD-MM.m` to `DD-MM.mmmm` + `N`/`S` | with `LONGITUDE` |
+| `LONGITUDE` | `DDD-MM.m` to `DDD-MM.mmmm` + `E`/`W` | with `LATITUDE` |
+| `SPEED` | non-negative decimal, at most 10000 (unit unspecified) | no |
 | `COURSE` | 1–3 digits, 0–359, + `T` (true) or `M` (magnetic) | no |
 | `COMMENT` | up to 80 characters | no |
 
 The hemisphere letter may be missing only when the value is zero; wl2k-go
-writes a space there. Minutes must be below 60, latitude at most 90 degrees,
-longitude at most 180. Unknown keys are ignored; a repeated key is an error.
+writes a space there. Coordinates, hemisphere letters and numbers must be
+ASCII. Minutes carry 1 to 4 decimal places and must be below 60, with one
+exception: exactly 60 with all-zero decimals (`43-60.0000N`) carries to the
+next degree, because wl2k-go formats minutes with `%07.4f` and can round
+59.99996 up to `60.0000`. The given or carried value must stay within 90
+degrees of latitude and 180 of longitude (`90-00.0000` and `180-00.0000` are
+valid; `89-60.0000` carries to exactly 90 and is valid; `90-00.0001` and
+`90-60.0000` are not). Zero is returned as `0.0`, never `-0.0`.
+
+`SPEED` must be finite and at most 10000; anything else makes the report
+invalid.
+
+A repeated known key (`DATE`, `LATITUDE`, `LONGITUDE`, `SPEED`, `COURSE`,
+`COMMENT`) is an error. Unknown keys, repeated or not, are ignored.
 
 ## Sources
 
