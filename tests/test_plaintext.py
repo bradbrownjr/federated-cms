@@ -1,6 +1,9 @@
 """Contract tests for federated_cms.plaintext; see docs/TEXT-EXTRACTOR.md."""
 
+import os
 import re
+import subprocess
+import sys
 import unittest
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
@@ -387,6 +390,149 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("$$", out)
         self.assertNotIn("Expires:", out)
         self.assertNotIn("MEZ023", out)
+
+
+def run_within(seconds, code):
+    """Run code in a child interpreter; fail if it takes longer than seconds."""
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
+    try:
+        subprocess.run([sys.executable, "-c", code], env=env, check=True, timeout=seconds,
+                       capture_output=True)
+    except subprocess.TimeoutExpired:
+        raise AssertionError(f"took longer than {seconds} s") from None
+
+
+EXTRACT = ("from datetime import datetime, timezone\n"
+           "from federated_cms.plaintext import extract\n"
+           "extract(DATA.encode(), url='u', fetched_at=datetime.now(timezone.utc), "
+           "content_type='text/html')\n")
+
+
+class HardeningDecodeTests(unittest.TestCase):
+    def test_non_whatwg_python_codecs_are_unknown(self):
+        self.assertEqual(decode(b"abc-def", "text/plain; charset=punycode"), ("abc-def", "utf-8"))
+        self.assertEqual(decode(b"\\u0041", "text/plain; charset=unicode_escape"), ("\\u0041", "utf-8"))
+        self.assertEqual(decode(b"Hello", "text/plain; charset=cp037"), ("Hello", "utf-8"))
+        self.assertEqual(decode(b"Hello", "text/plain; charset=x-user-defined"), ("Hello", "utf-8"))
+        self.assertEqual(decode(b"Hello", "text/plain; charset=replacement"), ("Hello", "utf-8"))
+
+    def test_whatwg_label_table(self):
+        cases = [("iso8859-1", b"\x93x\x94", "cp1252"), ("l1", b"\x93x\x94", "cp1252"),
+                 ("latin1", b"\x93x\x94", "cp1252"), ("ANSI_X3.4-1968", b"\x93x\x94", "cp1252"),
+                 ("iso-8859-9", b"\x80\xfd", "cp1254"), ("utf-16", b"a\x00", "utf-16-le"),
+                 ("utf-16be", b"\x00a", "utf-16-be"), ("Shift_JIS", b"\x82\xa0", "cp932"),
+                 ("gb2312", b"\xc4\xe3", "gb18030"), ("big5", b"\xa4\xa4", "big5hkscs"),
+                 ("euc-kr", b"\xb0\xa1", "cp949"), ("euc-jp", b"\xa4\xa2", "euc_jp"),
+                 ("iso-2022-jp", b"abc", "iso2022_jp"), ("tis-620", b"\xa1", "cp874"),
+                 ("koi8-r", b"\xc1", "koi8-r"), ("macintosh", b"\x8e", "mac-roman")]
+        for label, data, codec in cases:
+            with self.subTest(label=label):
+                self.assertEqual(decode(data, f"text/plain; charset={label}")[1], codec)
+        self.assertEqual(decode(b"\x93x\x94", "text/plain; charset=l1")[0], "“x”")
+        self.assertEqual(decode(b"\x80\xfd", "text/plain; charset=iso-8859-9")[0], "€ı")
+
+    def test_meta_utf16_means_utf8(self):
+        page = b'<html><meta charset="utf-16"><p>hi</p>'
+        self.assertEqual(decode(page, "text/html"), (page.decode(), "utf-8"))
+
+    def test_punycode_declaration_is_fast(self):
+        run_within(8, "from federated_cms.plaintext import decode\n"
+                      "decode(b'a' * 999_999 + b'-' + b'b' * 1_000_000, 'text/plain; charset=punycode')\n")
+
+    def test_bom_with_bad_bytes_uses_replacement(self):
+        self.assertEqual(decode(b"\xef\xbb\xbf\xff", None), ("�", "utf-8"))
+        self.assertEqual(decode(b"\xff\xfeA", None), ("�", "utf-16"))
+
+    def test_valueless_meta_attributes(self):
+        for page in (b"<html><meta http-equiv>x", b'<html><meta http-equiv="Content-Type" content>x',
+                     b"<html><meta charset>x"):
+            with self.subTest(page=page):
+                self.assertEqual(decode(page, "text/html"), (page.decode(), "utf-8"))
+
+
+class HardeningHtmlTests(unittest.TestCase):
+    def test_ascii_layout_holds_width(self):
+        title, text = html_to_text("<p>" + " ".join(["…"] * 35) + "</p>", ascii=True)
+        self.assertRegex(text, PRINTABLE)
+        self.assertTrue(all(len(line) <= 69 for line in text.splitlines()), text)
+        self.assertEqual(html_to_text("<title>Café</title><h1>Café…™</h1>", ascii=True),
+                         ("Cafe", "Cafe...TM\n========="))
+
+    def test_extract_wraps_ascii_text(self):
+        page = ("<p>" + " ".join(["\U0001F600"] * 30) + "</p>").encode()
+        doc = extract(page, url=URL, fetched_at=WHEN, content_type="text/html")
+        self.assertTrue(all(len(line) <= 69 for line in doc.text.splitlines()), doc.text)
+
+    def test_invisible_blocks_leave_no_gaps(self):
+        page = "<body><p>x</p><p>​</p><p>y</p><p>́</p>".encode()
+        self.assertEqual(extract(page, url=URL, fetched_at=WHEN, content_type="text/html").text, "x\n\ny")
+        self.assertEqual(extract("hello\n​\n".encode(), url=URL, fetched_at=WHEN).text, "hello")
+        self.assertEqual(extract("a\n\n​\n\nb".encode(), url=URL, fetched_at=WHEN).text, "a\n\nb")
+
+    def test_text_at_end_of_input_kept(self):
+        self.assertEqual(body("<p>AT&T"), "AT&T")
+        self.assertEqual(body("<p>hi &copy"), "hi ©")
+
+    def test_html_without_body_keeps_blocks(self):
+        self.assertEqual(html_to_text("<html><h1>X</h1><p>y</p><ul><li>a<li>b</ul>"),
+                         ("X", "X\n=\n\ny\n\n* a\n* b"))
+
+    def test_dropped_subtrees_never_contribute(self):
+        self.assertEqual(body("<table><tr><td>a</td></tr><template><tr><td>secret</td></tr></template></table>"),
+                         "a")
+        self.assertEqual(body("<body><p>Real</p><nav><main>menu</main></nav>"), "Real")
+        self.assertEqual(html_to_text("<nav><h1>Menu</h1></nav><h1>Real</h1>")[0], "Real")
+
+    def test_nested_table_printed_once(self):
+        self.assertEqual(body("<table><tr><td><table><tr><td>x</td></tr></table></td></tr></table>"), "x")
+
+    def test_div_wrapped_list_children(self):
+        self.assertEqual(body("<dl><div><dt>T</dt><dd>D</dd></div></dl>"), "T\n  D")
+        self.assertEqual(body("<ul><div><li>a</li></div></ul>"), "* a")
+
+    def test_list_indent_capped(self):
+        text = body("<ul><li>" * 40 + "deep")
+        self.assertEqual(text, " " * 34 + "* deep")
+        long = body("<ul><li>" * 40 + "word " * 30)
+        self.assertTrue(all(len(line) <= 69 for line in long.splitlines()), long)
+
+    def test_nul_removed_before_parsing(self):
+        self.assertEqual(body("<p>a\x00b</p>"), "ab")
+
+    def test_br_inside_pre(self):
+        self.assertEqual(body("<pre>a<br>b</pre>"), "a\nb")
+
+    def test_title_empty_after_ascii_is_none(self):
+        doc = extract("<title>​</title><p>x</p>".encode(), url=URL, fetched_at=WHEN,
+                      content_type="text/html")
+        self.assertIsNone(doc.title)
+
+
+class HardeningCostTests(unittest.TestCase):
+    def check(self, expression):
+        self.assertLessEqual(len(eval(expression).encode()), 2_000_000)
+        run_within(8, f"DATA = {expression}\n" + EXTRACT)
+
+    def test_p_flood_at_depth_cap(self):
+        self.check("'<div>' * 256 + '<p>' * ((2_000_000 - 5 * 256) // 3)")
+
+    def test_unclosed_inline_flood(self):
+        self.check("'<b>' * 660_000")
+
+    def test_many_tiny_blocks(self):
+        self.check("'<p>a</p>' * 250_000")
+
+
+class HardeningNwsTests(unittest.TestCase):
+    def test_cr_cr_lf_line_endings(self):
+        raw = nws_raw().decode("ascii")
+        for ending in ("\r\r\n", "\r\n", "\r"):
+            text = raw.replace("\n", ending)
+            with self.subTest(ending=ending):
+                self.assertTrue(is_nws_product(text))
+                self.assertEqual(clean_nws(text), nws_expected())
+        doc = extract(raw.replace("\n", "\r\r\n").encode(), url=URL, fetched_at=WHEN)
+        self.assertEqual((doc.kind, doc.text), ("nws", nws_expected()))
 
 
 if __name__ == "__main__":
