@@ -200,6 +200,7 @@ _VOID = frozenset('area base br col embed hr img input link meta source track wb
 _DROP = frozenset('head title script style noscript template svg iframe nav aside form button select textarea dialog'.split())
 _BLOCK = frozenset('p div section article main blockquote pre table ul ol dl h1 h2 h3 h4 h5 h6 hr figure header footer html body'.split())
 _INNER_BLOCK = _BLOCK | {'li', 'tr', 'td', 'th'}
+_HEAD_TAGS = frozenset('base basefont bgsound link meta title style script noscript noframes template'.split())
 
 
 @dataclass
@@ -225,6 +226,7 @@ class _Tree(HTMLParser):
         self.stack = [self.root]
         self.positions = {}
         self.dropped = None
+        self.drop_depth = 0
         self.landmark_depth = 0
         self.head_title = None
 
@@ -239,10 +241,16 @@ class _Tree(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         if self.dropped is not None:
-            if self.dropped.tag == 'head' and tag == 'title' and self.head_title is None:
-                self.head_title = _Node('title', dropped=True)
-                self.dropped.children.append(self.head_title)
-            return
+            if self.dropped.tag == 'head' and tag not in _HEAD_TAGS:
+                self.head_title = None
+                self._pop_to(len(self.stack) - 1)
+            else:
+                if tag == self.dropped.tag and tag not in _VOID:
+                    self.drop_depth += 1
+                if self.dropped.tag == 'head' and tag == 'title' and self.head_title is None:
+                    self.head_title = _Node('title', dropped=True)
+                    self.dropped.children.append(self.head_title)
+                return
         if len(self.stack) > _MAX_DEPTH and tag not in _DROP and tag not in ('header', 'footer'):
             if not any(k in ('hidden', 'aria-hidden', 'role') for k, v in attrs):
                 return
@@ -267,6 +275,7 @@ class _Tree(HTMLParser):
             self.positions.setdefault(tag, []).append(len(self.stack) - 1)
             if dropped:
                 self.dropped = node
+                self.drop_depth = 0
             elif tag in ('article', 'main'):
                 self.landmark_depth += 1
 
@@ -281,7 +290,10 @@ class _Tree(HTMLParser):
                 self.head_title = None
                 return
             if self.dropped.tag == tag:
-                self._pop_to(len(self.stack) - 1)
+                if self.drop_depth:
+                    self.drop_depth -= 1
+                else:
+                    self._pop_to(len(self.stack) - 1)
             return
         positions = self.positions.get(tag)
         if positions:
@@ -467,7 +479,7 @@ def _format_node(node, width, depth, formatted):
 
 
 def _format(node, width):
-    """Format the bounded tree bottom-up without recursion."""
+    """Format only nodes whose results their parents use, without recursion."""
     pending = [(node, 0, False)]
     formatted = {}
     while pending:
@@ -476,9 +488,16 @@ def _format(node, width):
             formatted[id(current)] = _format_node(current, width, depth, formatted)
         elif not current.dropped:
             pending.append((current, depth, True))
-            next_depth = depth + (current.tag in ('ul', 'ol'))
-            pending.extend((child, next_depth, False) for child in reversed(current.children)
-                           if isinstance(child, _Node) and not child.dropped)
+            if current.tag in ('ul', 'ol'):
+                children = [nested for item in _list_children(current, ('li',))
+                            for nested in item.children
+                            if isinstance(nested, _Node) and nested.tag in ('ul', 'ol')
+                            and not nested.dropped]
+                pending.extend((child, depth + 1, False) for child in reversed(children))
+            elif current.tag not in ('hr', 'pre', 'dl', 'table', 'blockquote',
+                                      'h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+                pending.extend((child, depth, False) for child in reversed(current.children)
+                               if isinstance(child, _Node) and child.tag in _BLOCK and not child.dropped)
     return formatted.get(id(node), '')
 
 def html_to_text(markup: str, *, width: int = 69, ascii: bool = False) -> tuple[str | None, str]:
@@ -486,10 +505,17 @@ def html_to_text(markup: str, *, width: int = 69, ascii: bool = False) -> tuple[
     parser.feed(markup.replace('\x00', ''))
     parser.close()
     if ascii:
-        for node in _nodes(parser.root):
+        pending = [parser.root]
+        while pending:
+            node = pending.pop()
+            if node.tag == 'pre' and not node.dropped:
+                node.children = [to_ascii(_inline(node).replace('\x00', '\n'))]
+                continue
             node.children = [(c if c.isascii() and c.isprintable() else to_ascii(c + 'x')[:-1])
                              if isinstance(c, str) else c
                              for c in node.children]
+            if not node.dropped or node.tag == 'head':
+                pending.extend(c for c in node.children if isinstance(c, _Node))
     nodes = list(_nodes(parser.root))
     title = next((_collapse(_raw(n, True)) for n in nodes if n.tag == 'title' and _collapse(_raw(n, True))), None)
     if not title:
