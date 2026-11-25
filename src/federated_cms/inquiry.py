@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 import re
 
 
@@ -45,18 +46,54 @@ class PositionReportError(ValueError):
 _CATALOG = re.compile(r"[A-Z0-9][A-Z0-9_.-]{0,63}\Z", re.ASCII)
 _URL = re.compile(r"https?://\S+\Z", re.IGNORECASE)
 _DATE = re.compile(r"[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}\Z")
-_LAT = re.compile(r"([0-9]{2})-([0-9]{2}\.[0-9]{4})([NS]?)\Z")
-_LON = re.compile(r"([0-9]{3})-([0-9]{2}\.[0-9]{4})([EW]?)\Z")
+_LAT = re.compile(r"([0-9]{2})-([0-9]{2}\.[0-9]{1,4})([NS]?)\Z")
+_LON = re.compile(r"([0-9]{3})-([0-9]{2}\.[0-9]{1,4})([EW]?)\Z")
 _SPEED = re.compile(r"[0-9]+(?:\.[0-9]+)?\Z")
 _COURSE = re.compile(r"([0-9]{1,3})([TM])\Z")
 _LINES = re.compile(r"\r\n|\r|\n")
+_ASCII_UPPER = str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+_POSITION_KEYS = {"DATE", "LATITUDE", "LONGITUDE", "SPEED", "COURSE", "COMMENT"}
+
+
+def _upper(value: str) -> str:
+    """Uppercase ASCII letters without folding other characters."""
+    return value.translate(_ASCII_UPPER)
+
+
+def _check_body(body: str, error: type[ValueError]) -> str:
+    """Check the UTF-8 size and remove a leading byte order mark."""
+    if len(body) > 8192:
+        raise error("body too large")
+    try:
+        size = len(body.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise error("invalid body") from exc
+    if size > 8192:
+        raise error("body too large")
+    return body.removeprefix("\ufeff")
+
+
+def _control(char: str) -> bool:
+    """Identify control characters that must not appear in item lines."""
+    return (ord(char) < 32 and char != "\t") or ord(char) == 127
+
+
+def _item_text(line: str) -> str:
+    """Remove comments while preserving semicolons in URLs."""
+    line = line.strip(" \t")
+    is_url = _upper(line).startswith(("HTTP://", "HTTPS://"))
+    for index, char in enumerate(line):
+        if char == ";" and (not is_url or (index and line[index - 1].isspace())):
+            line = line[:index]
+            break
+    return line.strip(" \t")
 
 
 def address_local_part(address: str) -> str:
     address = address.strip()
-    if address[:5].upper() == "SMTP:":
+    if _upper(address[:5]) == "SMTP:":
         address = address[5:]
-    local = address.split("@", 1)[0].strip().upper()
+    local = _upper(address.split("@", 1)[0].strip())
     if not local:
         raise ValueError("empty local part")
     return local
@@ -71,19 +108,20 @@ def service_for(address: str) -> str | None:
 
 
 def parse_inquiry(subject: str, body: str) -> InquiryRequest:
-    if len(body.encode("utf-8")) > 8192:
-        raise InquiryError("body too large")
-    if subject.strip().upper() not in ("REQUEST", "//WL2K REQUEST"):
+    body = _check_body(body, InquiryError)
+    if not subject.isascii() or _upper(subject.strip()) not in ("REQUEST", "//WL2K REQUEST"):
         raise InquiryError("invalid subject")
     items = []
     rejected = []
     seen = set()
     for number, line in enumerate(_LINES.split(body), 1):
-        value = line.split(";", 1)[0].strip()
+        value = _item_text(line)
         if not value:
             continue
-        upper = value.upper()
-        if upper == "LIST":
+        upper = _upper(value)
+        if not value.isascii() or any(_control(char) for char in value):
+            item = None
+        elif upper == "LIST":
             item = InquiryItem("list", upper)
         elif upper == "UPDATE_CAT":
             item = InquiryItem("update_catalog", upper)
@@ -94,7 +132,8 @@ def parse_inquiry(subject: str, body: str) -> InquiryRequest:
         else:
             item = None
         if item is None:
-            rejected.append(RejectedLine(number, value[:80], "invalid item"))
+            shown = "".join("?" if _control(char) else char for char in value[:80])
+            rejected.append(RejectedLine(number, shown, "invalid item"))
         elif item not in seen:
             if len(items) == 32:
                 rejected.append(RejectedLine(number, value[:80], "too many items"))
@@ -107,26 +146,32 @@ def parse_inquiry(subject: str, body: str) -> InquiryRequest:
 
 
 def _coordinate(value: str, pattern: re.Pattern, limit: int) -> float:
-    match = pattern.fullmatch(value.upper())
+    match = pattern.fullmatch(_upper(value))
     if not match:
         raise PositionReportError("invalid coordinate")
     degrees, minutes, hemisphere = match.groups()
     degrees, minutes = int(degrees), float(minutes)
-    if minutes >= 60 or degrees > limit or (degrees == limit and minutes) or (not hemisphere and (degrees or minutes)):
+    if minutes > 60:
+        raise PositionReportError("invalid coordinate")
+    if minutes == 60:
+        degrees += 1
+        minutes = 0
+    if degrees > limit or (degrees == limit and minutes) or (not hemisphere and (degrees or minutes)):
         raise PositionReportError("invalid coordinate")
     result = degrees + minutes / 60
-    return -result if hemisphere in ("S", "W") else result
+    return -result if result and hemisphere in ("S", "W") else result
 
 
 def parse_position_report(body: str) -> PositionReport:
-    if len(body.encode("utf-8")) > 8192:
-        raise PositionReportError("body too large")
+    body = _check_body(body, PositionReportError)
     fields = {}
     for line in _LINES.split(body):
         key, separator, value = line.partition(":")
         if not separator:
             continue
-        key = key.strip().upper()
+        key = _upper(key.strip())
+        if key not in _POSITION_KEYS:
+            continue
         if key in fields:
             raise PositionReportError("duplicate key")
         fields[key] = value.strip()
@@ -147,10 +192,12 @@ def parse_position_report(body: str) -> PositionReport:
     if "SPEED" in fields:
         if not _SPEED.fullmatch(fields["SPEED"]):
             raise PositionReportError("invalid speed")
+        if Decimal(fields["SPEED"]) > 10000:
+            raise PositionReportError("invalid speed")
         speed = float(fields["SPEED"])
     course = None
     if "COURSE" in fields:
-        match = _COURSE.fullmatch(fields["COURSE"].upper())
+        match = _COURSE.fullmatch(_upper(fields["COURSE"]))
         if not match or int(match[1]) > 359:
             raise PositionReportError("invalid course")
         course = (int(match[1]), match[2] == "M")

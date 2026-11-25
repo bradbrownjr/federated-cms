@@ -208,7 +208,7 @@ class PositionReportTests(unittest.TestCase):
             "DATE: 2026/01/02 03:04\nLATITUDE: 43-35.4120N\n",      # latitude without longitude
             "DATE: 2026/01/02 03:04\nLONGITUDE: 070-44.2380W\n",    # longitude without latitude
             "DATE: 2026/01/02 03:04\nLATITUDE: 91-00.0000N\nLONGITUDE: 070-44.2380W\n",
-            "DATE: 2026/01/02 03:04\nLATITUDE: 43-60.0000N\nLONGITUDE: 070-44.2380W\n",
+            "DATE: 2026/01/02 03:04\nLATITUDE: 43-60.5000N\nLONGITUDE: 070-44.2380W\n",
             "DATE: 2026/01/02 03:04\nLATITUDE: 43-35.4120E\nLONGITUDE: 070-44.2380W\n",
             "DATE: 2026/01/02 03:04\nLATITUDE: 43-35.4120N\nLONGITUDE: 181-00.0000W\n",
             "DATE: 2026/01/02 03:04\nLATITUDE: 43-35.4120 \nLONGITUDE: 070-44.2380W\n",  # nonzero, no hemisphere
