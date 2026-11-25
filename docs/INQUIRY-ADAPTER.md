@@ -82,6 +82,29 @@ MIME conversion; the B2 headers on the wire (for example `Mbo:` and `Type:`)
 are not in that file. The `INQUIRIES` reply also shows a stray `Â` where a
 UTF-8 non-breaking space was decoded as ISO-8859-1.
 
+### Express catalog file
+
+After that `LIST` reply, Express rewrote
+`C:\RMS Express\<CALL>\Data\Winlink Queries.txt` (121,538 bytes). Each line is
+now `CATEGORY|ID|DESCRIPTION|SIZE|DATE`, for example
+`WX_US_ME|ME_ZON_YORKC|Coastal York County Maine Zone Forecast|1344|2025/10/02`.
+A 2017 copy of the same file has four fields with no date, and is UTF-8 with a
+BOM and CRLF line endings. Descriptions include non-ASCII text such as
+`für` and `Québec`.
+
+- The file holds no URLs. The ID-to-source mapping exists only on the server,
+  so ours needs its own table.
+- `SIZE` appears to be the last measured reply size. Some entries look broken
+  at the source: many are `0`, and several single-county zone forecasts list
+  42,537 bytes, against roughly 1,500 for their neighbours.
+- The `LIST` reply (180,875 bytes) is larger than the file Express wrote
+  (121,538 bytes). Whether the reply carries extra fields Express drops is
+  unknown. The test is to send our own `LIST` reply from the lab and check
+  whether Express updates its catalog from it.
+- `UPDATE_CAT` is also a catalog ID (`WL2K_HELP|UPDATE_CAT|How to update the
+  catalog list`), but sending it returned the catalog itself, matching the
+  parser's special handling.
+
 So a catalog entry is an ID mapped to a source. Our server answers from
 `SERVICE`, one reply per item, with the extracted text as the body. Replies
 use plain ASCII where possible so the charset mismatch cannot occur.
