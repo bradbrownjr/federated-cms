@@ -74,7 +74,8 @@ fails to decode the bytes, falls through to steps 3 to 5. No step uses
 2. Tabs expand to 8-column stops (`str.expandtabs(8)`).
 3. Soft hyphen (U+00AD), zero-width space/joiners (U+200B, U+200C,
    U+200D) and U+FEFF are removed.
-4. `°F` becomes `F`, `°C` becomes `C`; any other `°` becomes ` deg`.
+4. `°` directly before an ASCII capital letter is removed (`45°F` becomes
+   `45F`, `43.6°N` becomes `43.6N`); any other `°` becomes ` deg`.
 5. Everything else goes through `anyascii`.
 6. Control characters other than `\n` (U+0000 to U+001F and U+007F) are
    removed.
@@ -100,7 +101,8 @@ rewrap (products are already at most 69 characters a line, NWSI
 
 1. Lines matching `^Expires:\d{12};;\d+$`. These are added by the NWS
    file server (tgftp.nws.noaa.gov), not by the product itself.
-2. The WMO heading line and the AWIPS identifier line.
+2. The WMO heading line, and the line directly after it when that is
+   an AWIPS identifier.
 3. UGC strings: a line starting `[A-Z]{2}[CZ]\d{3}` and made only of
    `[A-Z0-9>-]`, plus any following such lines, up to and including the
    line that ends in `-\d{6}-` (the product expiration time, section
@@ -127,8 +129,10 @@ missing, the first `<h1>` text; otherwise `None`.
 
 **Dropped with their content:** `head`, `title` (used only for the title), `script`, `style`, `noscript`,
 `template`, `svg`, `iframe`, `nav`, `aside`, `form`, `button`, `select`,
-`textarea`, `dialog`, and any element with a `hidden` attribute or
-`aria-hidden="true"`. `header` and `footer` are dropped too, unless
+`textarea`, `dialog`, any element with a `hidden` attribute or
+`aria-hidden="true"`, and any element whose `role` is one of the WAI-ARIA
+landmarks `navigation`, `banner`, `contentinfo`, `complementary` or
+`search`. `header` and `footer` are dropped too, unless
 they are inside an `article` or `main` element.
 
 **Parsing:** a real element stack. Void elements (`area`, `base`, `br`,
@@ -138,7 +142,10 @@ element of that name and everything opened after it; an end tag with
 no open element of that name is ignored. As in HTML, some start tags
 close an open element first: `p` closes an open `p`; `li` closes an
 open `li` of the same list; `dt` or `dd` closes an open `dt` or `dd`;
-`tr` closes an open `tr`; `td` or `th` closes an open `td` or `th`. A dropped element stays
+`tr` closes an open `tr`; `td` or `th` closes an open `td` or `th`.
+Nesting is limited to 256 open elements: deeper start tags open no
+scope and their text joins the enclosing element, except that a
+dropped element still opens one (so `<script>` content stays out). A dropped element stays
 dropped until its own end tag (or the end of the document), whatever
 nests inside it. Character references are decoded.
 
@@ -165,8 +172,15 @@ Empty blocks produce nothing.
 - **Tables:** one line per `tr`, cells (`th`, `td`) whitespace-collapsed
   and joined with ` | `; no blank lines between rows. Long rows wrap
   with a two-space continuation indent.
-- **`img`:** `[alt text]` when `alt` is non-empty, else nothing.
-- **Links:** the link text stays; the URL is dropped.
+- **`img`:** dropped. On real pages the alt text repeats nearby text or
+  names a logo, and costs airtime.
+- **Links:** the link text stays; the URL is dropped. Two links with
+  nothing between them are separated by a space (pages often rely on
+  CSS for that gap).
+- **Blocks inside an item:** within an `li`, `dt`, `dd` or `blockquote`,
+  each nested block element (any block above, or `li`, `tr`, `td`, `th`)
+  starts a new line, indented like the item's wrapped lines. Within a
+  table cell or heading it is separated by a space instead.
 
 **Wrapping:** paragraphs, list items, `dd`, table rows and quotes wrap
 to `width` with `textwrap`, `break_long_words=False` and
@@ -229,9 +243,9 @@ module's.
 - Observed: `tgftp.nws.noaa.gov/data/forecasts/zone/me/mez023.txt`,
   2026-11-25, saved as `tests/fixtures/plaintext/mez023.txt`. NWS
   products are US Government works.
-- rns-apps `lib/htmltext.py` (CC0) is the starting point for the HTML
-  handling; this spec replaces its skip counter with an element stack
-  and adds tables, `pre`, headings and lists.
+- rns-apps `lib/htmltext.py` (CC0) informed the HTML rules; this spec
+  uses an element stack instead of its skip counter and adds tables,
+  `pre`, headings and lists. No code is copied from it.
 
 ## Not in this version
 

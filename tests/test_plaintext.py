@@ -86,6 +86,7 @@ class ToAsciiTests(unittest.TestCase):
 
     def test_degrees(self):
         self.assertEqual(to_ascii("45°F and 7°C at 30° bearing"), "45F and 7C at 30 deg bearing")
+        self.assertEqual(to_ascii("43.64°N 70.3°W"), "43.64N 70.3W")
 
     def test_typographic_punctuation(self):
         self.assertEqual(to_ascii("“Hi” — it’s…"), '"Hi" - it\'s...')
@@ -123,6 +124,11 @@ class NwsTests(unittest.TestCase):
         self.assertTrue(is_nws_product("\n\nFPUS51 KGYX 250049 CCA\nZFPGYX\nText\n"))
         self.assertFalse(is_nws_product("Hello\nWorld\n"))
         self.assertFalse(is_nws_product("FPUS51 KGYX 250049\nnot an id line\n"))
+
+    def test_awips_line_only_directly_after_heading(self):
+        product = "FPUS51 KGYX 250049\nZFPGYX\nText.\n\n$$\n\nSMITH\n"
+        self.assertEqual(clean_nws(product), "Text.\n\nSMITH")
+        self.assertEqual(clean_nws("FPUS51 KGYX 250049\nnot an id\nSMITH\n"), "not an id\nSMITH")
 
     def test_segmented_product(self):
         product = (
@@ -168,6 +174,11 @@ class HtmlTitleAndRootTests(unittest.TestCase):
                 "<p>kept</p></body>")
         self.assertEqual(body(page), "kept")
 
+    def test_landmark_roles_dropped(self):
+        page = ('<div role="navigation">n</div><div role="search">s</div><div role="banner">b</div>'
+                '<div role="contentinfo">c</div><div role="complementary">x</div><p role="note">kept</p>')
+        self.assertEqual(body(page), "kept")
+
     def test_hidden_elements(self):
         page = '<div hidden><p>x</p></div><p aria-hidden="true">y</p><p>z</p>'
         self.assertEqual(body(page), "z")
@@ -205,6 +216,20 @@ class HtmlStructureTests(unittest.TestCase):
         self.assertEqual(body("<ol><li>alpha beta gamma delta epsilon</li></ol>", width=20),
                          "1. alpha beta gamma\n   delta epsilon")
 
+    def test_blocks_inside_list_items_break_lines(self):
+        page = ('<ul><li><div><p>Tonight</p><p><img alt="Clear, low 21."></p>'
+                '<p>Low: 21 &deg;F</p><p>Clear</p></div></li><li>a<br>b</li></ul>')
+        self.assertEqual(body(page), "* Tonight\n  Low: 21 \u00b0F\n  Clear\n* a\n  b")
+
+    def test_blocks_inside_quotes_and_cells(self):
+        self.assertEqual(body("<blockquote><p>one</p><p>two</p></blockquote>"), "> one\n> two")
+        self.assertEqual(body("<table><tr><td><p>a</p><p>b</p></td><td>c</td></tr></table>"), "a b | c")
+        self.assertEqual(body("<h2><span>A</span><div>B</div></h2>"), "A B\n---")
+
+    def test_adjacent_links_are_separated(self):
+        page = '<p><a href="/1">One</a><a href="/2">Two</a> <a href="/3">Three</a>.</p>'
+        self.assertEqual(body(page), "One Two Three.")
+
     def test_definition_list(self):
         self.assertEqual(body("<dl><dt>Term</dt><dd>Meaning</dd></dl>"), "Term\n  Meaning")
 
@@ -226,7 +251,7 @@ class HtmlStructureTests(unittest.TestCase):
         self.assertEqual(body(page), "Day | High\nWed | 45\n\nafter")
 
     def test_images_and_links(self):
-        self.assertEqual(body('<p>See <img src=x alt="map"> here <img src=y></p>'), "See [map] here")
+        self.assertEqual(body('<p>See <img src=x alt="map"> here <img src=y></p>'), "See here")
         self.assertEqual(body('<p>Read <a href="https://x.example/">the docs</a>.</p>'), "Read the docs.")
 
     def test_character_references(self):
@@ -259,7 +284,12 @@ class HtmlParsingTests(unittest.TestCase):
         self.assertEqual(body("<p>kept</p><script>var a = '<p>x</p>';"), "kept")
 
     def test_void_elements_do_not_open_scopes(self):
-        self.assertEqual(body("<p>a<br>b<img alt=c>d<wbr>e</p><p>f</p>"), "a\nb[c]de\n\nf")
+        self.assertEqual(body("<p>a<br>b<img alt=c>d<wbr>e</p><p>f</p>"), "a\nbde\n\nf")
+
+    def test_deep_nesting_is_flattened(self):
+        self.assertEqual(body("<div>" * 5000 + "deep" + "</div>" * 5000 + "<p>after</p>"), "deep\n\nafter")
+        deep = "<span>" * 300
+        self.assertEqual(body(f"<p>{deep}a<script>x()</script>b</p>"), "ab")
 
 
 class ExtractTests(unittest.TestCase):
@@ -281,6 +311,14 @@ class ExtractTests(unittest.TestCase):
     def test_html_not_sniffed_when_type_says_text(self):
         doc = extract(b"<html><p>x</p></html>", url=URL, fetched_at=WHEN, content_type="text/plain")
         self.assertEqual((doc.kind, doc.text), ("text", "<html><p>x</p></html>"))
+
+    def test_html_with_bom_is_sniffed(self):
+        doc = extract(b"\xef\xbb\xbf<!doctype html><p>x</p>", url=URL, fetched_at=WHEN)
+        self.assertEqual((doc.kind, doc.text), ("html", "x"))
+
+    def test_large_windows_1252_input(self):
+        doc = extract(b"caf\xe9 " * 300_000, url=URL, fetched_at=WHEN)
+        self.assertTrue(doc.text.startswith("cafe cafe"))
 
     def test_plain_text(self):
         doc = extract(b"\n\nline1  \r\n\r\n\r\n  indented\n\n", url=URL, fetched_at=WHEN)
