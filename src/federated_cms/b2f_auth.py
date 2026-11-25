@@ -1,8 +1,8 @@
 """Legacy B2F secure-login response for isolated interoperability tests.
 
-Algorithm and test vectors: kissterm winlink/secure.py, based on wl2k-go
-fbb/secure.go (MIT). The protocol uses MD5 and a short response; it is not a
-modern password-authentication scheme and provides no transport encryption.
+Algorithm and test vectors: kissterm winlink/secure.py, ported from wl2k-go
+`fbb/secure.go` (MIT, LA5NTA), itself a port of paclink-unix's. The
+protocol uses MD5 and a short response; it is not a modern password-authentication scheme and provides no transport encryption.
 """
 import hashlib
 
