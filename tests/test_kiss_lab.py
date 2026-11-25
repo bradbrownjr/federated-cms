@@ -33,8 +33,8 @@ if KISSTERM:
 
 @unittest.skipUnless(KISSTERM, 'set FCMS_KISSTERM_PATH for the optional KISS test')
 class KissLabTests(unittest.IsolatedAsyncioTestCase):
-    async def test_virtual_kiss_relay_authenticates_and_delivers(self):
-        from tests.virtual_kiss_sid import run
+    async def test_virtual_kiss_authenticates_and_delivers(self):
+        from tests.virtual_kiss import run
         import socket
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteStore(Path(directory) / 'lab.sqlite')
@@ -48,8 +48,8 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
             with socket.socket() as reservation:
                 reservation.bind(('127.0.0.1', 0))
                 port = reservation.getsockname()[1]
-            lab = asyncio.create_task(run('127.0.0.1', port, '[FCMS-0.1-B2FWHM$]',
-                                          'N0LAB-10', 'N0CALL', 20, b2f.server_address[1]))
+            lab = asyncio.create_task(run('127.0.0.1', port, 'N0LAB-10', 'N0CALL',
+                                          b2f.server_address[1], 20))
             transport = TcpKissTransport('127.0.0.1', port)
             station = None
             try:
@@ -80,36 +80,6 @@ class KissLabTests(unittest.IsolatedAsyncioTestCase):
                 b2f.shutdown()
                 worker.join(timeout=5)
                 b2f.server_close()
-
-    async def test_virtual_kiss_sid_probe_without_modem_or_mailbox(self):
-        from tests.virtual_kiss_sid import run
-        import socket
-        with socket.socket() as reservation:
-            reservation.bind(('127.0.0.1', 0))
-            port = reservation.getsockname()[1]
-        lab = asyncio.create_task(run('127.0.0.1', port, '[FCMS-0.1-B2FHM$]',
-                                      'N0LAB-10', 'N0CALL', 10))
-        transport = TcpKissTransport('127.0.0.1', port)
-        station = None
-        try:
-            await asyncio.sleep(.2)
-            await transport.open()
-            source = AX25Address.parse('N0CALL')
-            station = AX25Station(source, transport)
-            data = asyncio.Queue()
-            station.on_link_created.append(lambda link: link.on_data.append(
-                lambda _: data.put_nowait(link.read_nowait())))
-            link = await station.connect(AX25Path(AX25Address.parse('N0LAB-10'), source), timeout=5)
-            received = await asyncio.wait_for(data.get(), 5)
-            self.assertIn(b'[FCMS-0.1-B2FHM$]', received)
-            await link.send(b'client refusal\r')
-            await asyncio.wait_for(lab, 5)
-        finally:
-            lab.cancel()
-            await asyncio.gather(lab, return_exceptions=True)
-            if station:
-                station.close()
-            await transport.close()
 
     def test_gate_starts_closed_and_exhausts(self):
         gate = LabGate(2, 30)

@@ -21,7 +21,7 @@ Milestone exit gates remain open until demonstrated. Checked items denote comple
 - [x] Inspect the Linux RMS Gateway transport, configuration and dependencies. Exercise the pinned gateway with kissterm and Pat, the test-only SGL adapter, and a persistent B2F mailbox on isolated loopback. [Gateway findings](docs/RMS-GATEWAY-FINDINGS.md).
 - [x] Test independent B2F endpoint with Pat in an isolated lab (synthetic messages via test-only localhost Telnet shim; authentication remains open).
 - [x] Exchange authenticated messages and attachments between unmodified Winlink Express 1.8.0.0 (Packet Winlink) and the B2F lab, over virtual KISS and over 1200-baud RF ([TCP KISS lab](docs/TCP-KISS-B2F-LAB.md)).
-- [ ] Move the observed `W` SID requirement from the test-only relay into the B2F server.
+- [x] Server identifier `[FCMS-0.1-B2FWHM$]` includes the `W` from the Open B2F example.
 - [ ] Determine whether unmodified RMS software can use a self-hosted CMS; record blockers and alternatives.
 - [ ] Map Winlink email-based information requests into a generic service-request adapter.
 **Exit:** documented compatibility matrix and go/no-go recommendation for preserving existing clients and gateways. See [research plan](docs/WINLINK-INTEROPERABILITY.md).

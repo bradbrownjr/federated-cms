@@ -45,50 +45,32 @@ state machine and the real B2F lab, entirely on localhost. It checks a
 bidirectional message and attachment exchange and reopened SQLite state. It
 does not validate a particular physical modem or radio.
 
-In one operator-initiated physical-radio trial, Winlink Express in Packet
-Winlink mode established a direct AX.25 connection to the lab. Express
-reported that the lab's `FCMS` SID was invalid, classified the endpoint as a
-peer-to-peer station and disconnected without sending an authentication
-response. Its session window also displayed the challenge and prompt. The
-server's synthetic message remained pending. The initial trial established
-the radio and link path. The corresponding offline regression verifies that a
-client refusal before authentication leaves the pending message in the
-mailbox.
+In the first physical-radio trial, Winlink Express in Packet Winlink mode
+connected to the lab over AX.25, reported that the lab's identifier was
+invalid, treated the endpoint as a peer-to-peer station and disconnected
+before authenticating. The server's synthetic message stayed pending. An
+offline regression test checks that a client refusal before authentication
+leaves pending mail in place.
 
-An operator-supplied successful Packet Winlink reference session displayed
-`[WL2K-5.0-B2FWIHJM$]`, which also appears as an example in the public
-[Open B2F specification](https://winlink.org/B2F). Both identifiers contain
-`B2` and `F`, but their software names, versions and other feature characters
-differ, so the follow-up probes kept the FCMS name and version and varied the
-feature characters.
+An operator's normal Express session with the production CMS shows the
+identifier `[WL2K-5.0-B2FWIHJM$]`, which is also the example in the public
+[Open B2F specification](https://winlink.org/B2F). The lab server's
+identifier, `[FCMS-0.1-B2FWHM$]`, keeps its own name and includes the
+specification's `W`. With it, Express 1.8.0.0 connects to the lab normally.
 
-In a subsequent virtual TCP KISS experiment with Express 1.8.0.0, the
-reference SID and `[FCMS-0.1-B2FWIHJM$]` both led to a client handshake.
-The otherwise identical pair `[FCMS-0.1-B2FWHM$]` and
-`[FCMS-0.1-B2FHM$]` respectively led to a handshake and a peer-to-peer/SID
-rejection. Adding `W` changed the decision for that pair in the tested
-version and setup. These comparisons used a probe without a challenge,
-authentication, mailbox or radio. The meaning of `W` beyond that observed
-decision remains open.
-
-For further controlled testing, `tests.virtual_kiss_sid` can connect its
-virtual KISS network to a loopback B2F lab endpoint with `--b2f-port`. Its
-test-only proxy substitutes the selected SID and relays the remaining bytes
-unchanged. The proxy is an experiment, not evidence that all features in a
-selected SID are implemented. Bind its virtual KISS listener to loopback by
-default; a LAN bind must be selected explicitly for an operator's client.
-Use a separate lab mailbox and synthetic messages. The KISS network does not
-connect to a physical modem.
+`tests.virtual_kiss` runs a one-session virtual TCP KISS network in front of
+the lab bridge, so a client can be tested without a modem or radio. It binds
+to loopback unless a LAN address is given for an operator's client. Use a
+separate lab mailbox and synthetic messages.
 
 On 2026-11-24, the operator used Express 1.8.0.0 Packet Winlink over this
-virtual KISS network and the experimental `W` SID proxy to connect to the
+virtual KISS network to connect to the
 password-protected lab. Express received a synthetic message, displayed it in
 the inbox and disconnected; the reopened lab database had no pending outgoing
 messages. This demonstrates a lab download and authentication in this setup,
 and a subsequent session uploaded a synthetic message. Express reported a
 successful send, and a newly opened database connection confirmed the message
-in the lab inbox. The radio trials below exercised the modified SID on the
-physical link. The session record omits authentication challenges and responses.
+in the lab inbox. The session record omits authentication challenges and responses.
 
 A simulated-KISS attachment session exposed an Express 1.8.0.0 message ending
 with CRLF and an additional NUL after the final attachment. The lab validator
@@ -100,16 +82,8 @@ contained the upload with both declared attachments and no pending outgoing
 messages. The operator also opened the downloaded synthetic text attachment
 in Express and confirmed that its contents matched the sent fixture.
 
-The one-session `tests.radio_sid_relay` is a loopback-only, experimental SID
-adapter for a physical-modem trial. It substitutes the observed `W` SID for
-the lab SID while passing the remaining stream through to the lab. It does
-not establish support for every capability that a client may associate with
-`W`. Pair it only with the operator-controlled KISS bridge and synthetic lab
-mail; it is not a production gateway or a connection to Winlink servers.
-
 On 2026-11-24, the operator ran one low-power direct radio session between
-Express Packet Winlink and this lab through two sound modems using that SID
-adapter. Express reported a synthetic attachment upload and download and a
+Express Packet Winlink and this lab through two sound modems. Express reported a synthetic attachment upload and download and a
 clean disconnect. A new database connection confirmed the upload, containing
 two attachments, and no pending outbound message. Express reported 2,153
 upload bytes in 88 seconds. The operator's monitor showed retransmitted I
@@ -189,15 +163,6 @@ separation and received signal levels were not measured. Receiver overload is
 a possible contributor, not an established cause. See
 [packet troubleshooting](PACKET-TROUBLESHOOTING.md) for controlled comparisons.
 
-For controlled identifier experiments, `python -m tests.sid_probe --sid
-'[FCMS-0.1-B2FHM$]'` starts a one-connection diagnostic on `127.0.0.1:63192`.
-Run it on the client computer on a private loopback connection only; never
-forward it to a radio or external network. It sends the selected identifier
-and a diagnostic prompt, has no password, challenge or mailbox, and reports
-only whether the client sent data. It cannot complete a B2F session. A test
-against a Telnet session may provide a clue, but cannot establish Packet
-Winlink behavior because the client may treat the transports differently.
-
 ## Operator-controlled use
 
 Before any operation that could key a transmitter, establish the actual
@@ -273,29 +238,15 @@ gateway acceptance is not a delivery receipt from another human recipient.
 Use the isolated Express setup and station controls described above. Queue a
 synthetic attachment message in the dedicated lab database, then close the
 seeding session. Queue a separate synthetic attachment message for upload in
-Express with two synthetic files. Start a loopback B2F server from a checkout
-that accepts the extra NUL after the final attachment observed in Express
-1.8.0.0. This example uses port 63194 for that server. The general bridge
-example above connects directly to port 63191.
+Express with two synthetic files. Start the loopback B2F server, then the
+bridge with the operator's modem and direct station addresses.
 
 ```text
-python -m federated_cms.b2f --port 63194 --lab-account LAB_ACCOUNT --password-file LAB_PASSWORD_FILE --database LAB_DATABASE
+python -m federated_cms.b2f --port 63191 --lab-account LAB_ACCOUNT --password-file LAB_PASSWORD_FILE --database LAB_DATABASE
 ```
 
-Run the one-session SID relay from the repository root and point it at the
-updated server on port 63194.
-
 ```text
-python -m tests.radio_sid_relay --port 63195 --b2f-port 63194 --seconds 600
-```
-
-The relay checks the B2F listener and its SID before printing its readiness
-message. Once it prints that message, start the bridge with the operator's
-modem and direct station addresses. Point the bridge at the relay port to
-present the experimental FCMS SID used in the successful Express sessions.
-
-```text
-python -m federated_cms.kiss_lab --kiss-host MODEM_HOST --kiss-port MODEM_PORT --station STATION_CALL --peer CLIENT_CALL --b2f-port 63195 --ack-delay 1 --enable-tx
+python -m federated_cms.kiss_lab --kiss-host MODEM_HOST --kiss-port MODEM_PORT --station STATION_CALL --peer CLIENT_CALL --b2f-port 63191 --ack-delay 1 --enable-tx
 ```
 
 Set the Express Packet TNC Model to `ACKMODE` with a compatible modem, then
@@ -311,7 +262,7 @@ python -m tests.verify_lab_attachments LAB_DATABASE LAB_ACCOUNT UPLOAD_MID FIXTU
 ```
 
 For a NORMAL/ACKMODE comparison, keep T2 and the other packet and radio
-settings fixed, restart the bridge and relay for each run, and use comparably
+settings fixed, restart the bridge for each run, and use comparably
 sized synthetic fixtures with fresh message IDs. Record completion, duration
 and retransmissions.
 
