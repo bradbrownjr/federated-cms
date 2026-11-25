@@ -60,8 +60,31 @@ account:
     and the `$$` terminator. 1,962 bytes uncompressed, 935 compressed; no
     attachment.
 
+A second request with body `UPDATE_CAT` and `INQUIRIES` returned two
+messages:
+
+- `Subject: INQUIRY - https://catalog.winlink.org/inquiries.txt`: Winlink's
+  own description of inquiries. It says inquiries are accepted only from
+  Winlink radio accounts, `LIST` returns the catalog, any Internet URL may be
+  requested, and replies must stay under about 120 KB compressed. The public
+  file is 1,886 bytes, the same as the `SIZE` field for `INQUIRIES` in the
+  third-party copy of `Winlink Queries.txt`, so `SIZE` appears to be the
+  source's byte count.
+- `Subject: INQUIRY: LIST`: the full catalog, 180,875 bytes uncompressed and
+  42,678 compressed. `UPDATE_CAT` returned the whole list, not a delta, and
+  the subject format differs from URL replies.
+
+Express stores received messages as MIME files
+(`C:\RMS Express\<CALL>\Messages\<MID>.mime`). The stored reply has
+`From: SERVICE@winlink.org`, `To: KC1JMH@winlink.org`, `X-Source: SYSTEM`, and
+a `text/plain; charset="iso-8859-1"` quoted-printable body. Those are Express's
+MIME conversion; the B2 headers on the wire (for example `Mbo:` and `Type:`)
+are not in that file. The `INQUIRIES` reply also shows a stray `Â` where a
+UTF-8 non-breaking space was decoded as ISO-8859-1.
+
 So a catalog entry is an ID mapped to a source. Our server answers from
-`SERVICE`, one reply per item, with the extracted text as the body.
+`SERVICE`, one reply per item, with the extracted text as the body. Replies
+use plain ASCII where possible so the charset mismatch cannot occur.
 
 ## Position report (`QTH`)
 
