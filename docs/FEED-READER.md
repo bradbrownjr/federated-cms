@@ -83,14 +83,16 @@ encodings such as windows-1252. An HTTP `charset` is not used.
 | `content:encoded` | `http://purl.org/rss/1.0/modules/content/` |
 | `dc:date` | `http://purl.org/dc/elements/1.1/` |
 
-Only direct children are read: a channel's or feed's own fields, and
+When a field occurs more than once, the first is used. Only direct
+children are read: a channel's or feed's own fields, and
 each item's or entry's own fields. Other elements, extensions such as
 `cap:` and `media:`, and Atom elements inside an RSS channel are
 ignored.
 
 **Text values.** An element's character data, CDATA included, with
 character references decoded once by the XML parser. Titles have runs
-of whitespace collapsed to one space. Every value has surrounding
+of whitespace (as `str.split` sees it, so no-break spaces too) collapsed
+to one space. Every value has surrounding
 whitespace removed, and an empty value means the field is `None`.
 
 **Links** resolve against `url` (`urllib.parse.urljoin`). A result whose
@@ -105,7 +107,8 @@ channel:
 - `link`: `link`; when there is none, `guid` when it is an absolute
   http or https URL and its `isPermaLink` attribute is not `false`.
 - `id`: `guid`.
-- `published`: `pubDate`, else `dc:date`, through `parse_date`.
+- `published`: `pubDate` through `parse_date`; when that is missing or
+  unreadable, `dc:date`.
 - `summary`: `description`, `is_html=True`. (RSS 2.0 allows
   entity-encoded HTML there, and feeds use it.)
 - `content`: `content:encoded`, `is_html=True`.
@@ -121,7 +124,8 @@ The feed's `title` and `link`, and for each `entry`:
   absent: the first with `type` `text/html` or `application/xhtml+xml`,
   else the first of them. Its `href`, resolved.
 - `id`: `id`.
-- `published`: `published`, else `updated`, through `parse_date`.
+- `published`: `published` through `parse_date`; when that is missing
+  or unreadable, `updated`.
 - `summary` and `content`: text constructs. `content` with a `src`
   attribute (content held elsewhere) is `None`.
 
@@ -174,7 +178,25 @@ Never raises.
   - `nws-alerts-ak.atom`: <https://api.weather.gov/alerts/active.atom?area=AK>
   - `nws-alerts-me-empty.atom`: the same for `area=ME`, with no alerts.
 
+## Notes from real feeds
+
+Seventeen live feeds were parsed on 2026-11-25 (BBC, NPR, NASA, ARRL,
+Hacker News, Le Monde, WordPress, GitHub, Python Insider, NWS, USGS,
+YouTube, xkcd, Reddit, Mastodon and others). All parsed except one HTML
+page, refused at its `<!DOCTYPE html>`. Behaviour the service must
+allow for:
+
+- Some feeds carry their text only in Atom `content` (GitHub releases),
+  or only in Media RSS `media:description` (YouTube), which this version
+  ignores.
+- A missing or blocked feed can arrive as a valid, empty feed (Reddit
+  returned Atom titled "Not Found"). Fetch errors come from the HTTP
+  status, which is the caller's job.
+- `updated` is a revision time, not an event time (USGS earthquakes
+  have no `published`).
+
 ## Not in this version
 
-RSS 1.0, `xml:base`, enclosures, categories, authors, feed discovery
-from HTML pages, and fetching or caching (the `NEWS` service's job).
+RSS 1.0, Media RSS, `xml:base`, enclosures, categories, authors, feed
+discovery from HTML pages, and fetching or caching (the `NEWS`
+service's job).

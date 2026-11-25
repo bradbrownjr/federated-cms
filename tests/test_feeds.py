@@ -177,6 +177,22 @@ def test_rss_dc_date_fallback():
     assert item.published == utc(2026, 11, 25, 2, 14, 36)
 
 
+def test_unreadable_date_falls_back():
+    ns = f' xmlns:dc="{DC}"'
+    item = one(rss("<item><title>A</title><pubDate>soon</pubDate>"
+                   "<dc:date>2026-11-24T21:14:36Z</dc:date></item>", ns=ns))
+    assert item.published == utc(2026, 11, 24, 21, 14, 36)
+    item = one(atom("<entry><title>A</title><published>n/a</published>"
+                    "<updated>2026-11-25T10:00:00Z</updated></entry>"))
+    assert item.published == utc(2026, 11, 25, 10)
+
+
+def test_duplicate_fields_use_the_first():
+    item = one(rss("<item><title>First</title><title>Second</title>"
+                   "<link>https://example.org/1</link><link>https://example.org/2</link></item>"))
+    assert (item.title, item.link) == ("First", "https://example.org/1")
+
+
 def test_rss_unreadable_date_is_none():
     item = one(rss("<item><title>A</title><pubDate>yesterday</pubDate></item>"))
     assert item.published is None
@@ -434,7 +450,7 @@ def test_large_feed_is_fast():
     data = rss(items)
     assert len(data) > 1_000_000
     start = time.perf_counter()
-    feed = parse_feed(data, url=URL, max_items=10_000)
+    feed = parse_feed(data, url=URL, max_bytes=3_000_000, max_items=10_000)
     assert time.perf_counter() - start < 3
     assert len(feed.items) == 5000
     assert feed.items[-1].link == "https://example.org/4999"
