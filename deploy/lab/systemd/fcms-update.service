@@ -1,0 +1,7 @@
+[Unit]
+Description=Update the Federated CMS lab from GitHub when reachable
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/fcms-lab/federated-cms/deploy/lab/update.sh

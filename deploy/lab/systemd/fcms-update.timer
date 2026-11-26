@@ -1,0 +1,10 @@
+[Unit]
+Description=Check GitHub for Federated CMS updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

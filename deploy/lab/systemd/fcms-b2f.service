@@ -1,0 +1,15 @@
+[Unit]
+Description=Federated CMS lab B2F server (127.0.0.1 only)
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.local/share/fcms-lab/lab.env
+Environment=PYTHONPATH=%h/.local/share/fcms-lab/federated-cms/src
+WorkingDirectory=%h/.local/share/fcms-lab
+ExecStart=/usr/bin/python3 -m federated_cms.b2f --port ${FCMS_B2F_PORT} --lab-account ${FCMS_LAB_ACCOUNT} --password-file %h/.local/share/fcms-lab/lab-password.txt --database %h/.local/share/fcms-lab/fcms-b2f-lab.sqlite3
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

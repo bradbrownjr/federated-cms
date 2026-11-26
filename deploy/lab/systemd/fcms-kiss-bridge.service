@@ -1,0 +1,12 @@
+[Unit]
+Description=Federated CMS lab KISS bridge (transmits; one session, then exits)
+Requires=fcms-b2f.service
+After=fcms-b2f.service
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.local/share/fcms-lab/lab.env
+Environment=PYTHONPATH=%h/.local/share/fcms-lab/federated-cms/src:%h/.local/share/fcms-lab/kissterm
+WorkingDirectory=%h/.local/share/fcms-lab
+ExecStart=/usr/bin/python3 -m federated_cms.kiss_lab --kiss-host ${FCMS_KISS_HOST} --kiss-port ${FCMS_KISS_PORT} --station ${FCMS_STATION} --peer ${FCMS_PEER} --b2f-port ${FCMS_B2F_PORT} --ack-delay 1 --enable-tx
+Restart=no
