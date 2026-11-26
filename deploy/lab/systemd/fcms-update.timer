@@ -2,9 +2,9 @@
 Description=Check GitHub for Federated CMS updates
 
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=10min
-RandomizedDelaySec=60
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=15min
 
 [Install]
 WantedBy=timers.target

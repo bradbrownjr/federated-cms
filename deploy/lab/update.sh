@@ -2,7 +2,8 @@
 # Update the lab install to the newest commit on main whose CI passed,
 # then restart the server. Does nothing when GitHub cannot be reached,
 # when CI has not finished or failed, or while a session is in progress.
-# Run by fcms-update.timer; safe to run by hand.
+# Run daily by fcms-update.timer, and by hand after a merge to main:
+#   update.sh --wait   waits up to 30 minutes for CI on the new commit.
 set -euo pipefail
 
 main() {
@@ -21,8 +22,14 @@ main() {
     new=$(git rev-parse origin/main)
     [ "$old" = "$new" ] && return 0
 
-    local ci
+    local ci waited=0 limit=0
+    [ "${1:-}" = "--wait" ] && limit=1800
     ci=$(ci_state "$new")
+    while [ "$ci" = pending ] && [ "$waited" -lt "$limit" ]; do
+        sleep 30
+        waited=$((waited + 30))
+        ci=$(ci_state "$new")
+    done
     case "$ci" in
         passed) ;;
         pending) log "main ${new:0:7}: CI not finished; will check again"; return 0 ;;
