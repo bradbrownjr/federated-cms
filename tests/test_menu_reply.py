@@ -1,7 +1,8 @@
 """Contract tests for reading a client's reply to a numbered menu.
 
 See docs/MENU-REPLY.md. The message layout is the Winlink Express reply
-recorded in the interactive-services design ("Reading a reply"); every message
+recorded in the interactive-services design ("Reading a reply"), addressed to
+the node's service address FCMS instead of the captured SERVICE; every message
 here is synthetic (callsign N0CALL). These tests define the behaviour of
 federated_cms.menu_reply. Do not change them to make an implementation pass.
 """
@@ -17,11 +18,11 @@ from federated_cms.menu_reply import MenuReply, MenuReplyError, parse_menu_reply
 
 FIXTURES = Path(__file__).parent / "fixtures" / "menu_reply"
 
-SUBJECT = "Re: INQUIRY - WIKI Mercury: choose [K7QX]"
-TO = "SERVICE@winlink.org"
-SEP = b"----- Message from SERVICE sent 2026/11/25 00:00 -----"
-ORIGINAL = (b"Message ID: 3NK9WQ2XJ7ST\nDate: 2026/11/25 00:00  (UTC)\nFrom: SERVICE\nTo: N0CALL\n"
-            b"Source: SYSTEM\nSubject: INQUIRY - WIKI Mercury: choose [K7QX]\n\n"
+SUBJECT = "Re: FCMS - WIKI Mercury: choose [K7QX]"
+TO = "FCMS"
+SEP = b"----- Message from FCMS sent 2026/11/25 00:00 -----"
+ORIGINAL = (b"Message ID: 3NK9WQ2XJ7ST\nDate: 2026/11/25 00:00  (UTC)\nFrom: FCMS\nTo: N0CALL\n"
+            b"Subject: FCMS - WIKI Mercury: choose [K7QX]\n\n"
             b"1. Mercury (planet)\n2. Mercury (element)\n3. 9\nEach: WIKI\xc2\xa0<its title>\n")
 TEXT = 'text/plain; charset="iso-8859-1"'
 
@@ -172,31 +173,48 @@ def rfc822_chain(count: int) -> bytes:
 
 
 class RecipientTests(Base):
+    """The reply must be To the node's service address, FCMS unless the caller names another."""
+
     def test_service_address_forms_accepted(self):
-        for to in ("SERVICE@winlink.org", "service@winlink.org", "Service@Example.ORG", "SERVICE",
-                   "SERVICE@mainepacketradio.org", '"Service Desk" <SERVICE@winlink.org>',
-                   "Bob <bob@example.org>, SERVICE@winlink.org", "bob@example.org,service@x",
-                   "SERVICE@winlink.org, SERVICE@other.example", "Winlink <service@winlink.org>"):
+        for to in ("FCMS", "fcms", "FCMS@lab.example", "fcms@Example.ORG", "Fcms@mainepacketradio.org",
+                   "FCMS@winlink.org", "SMTP:FCMS@lab.example", "smtp:fcms@lab.example",
+                   '"Node Desk" <FCMS@lab.example>', "Bob <bob@example.org>, FCMS@lab.example",
+                   "bob@example.org,fcms@x", "FCMS@lab.example, FCMS@other.example", "N0CALL, FCMS"):
             with self.subTest(to=to):
                 self.assertReply(express(to=to))
 
+    def test_service_is_not_accepted(self):
+        # SERVICE is Winlink's own system address; the node never answers it.
+        for to in ("SERVICE", "SERVICE@winlink.org", "service@lab.example", "SMTP:SERVICE@lab.example",
+                   "Winlink <service@winlink.org>"):
+            with self.subTest(to=to):
+                self.assertReason(express(to=to), "no service address")
+
     def test_other_addresses_rejected(self):
-        for to in ("INQUIRY@winlink.org", "QTH@winlink.org", "SERVICES@winlink.org", "XSERVICE@winlink.org",
-                   "SERVICE.X@winlink.org", "SERVICE-1@winlink.org", "SERVICE <bob@example.org>",
-                   "N0CALL@winlink.org", "bob@service.example.org", "", "@winlink.org"):
+        for to in ("INQUIRY@lab.example", "QTH@lab.example", "SYSTEM", "FCMSS@lab.example", "XFCMS@lab.example",
+                   "FCMS.X@lab.example", "FCMS-1@lab.example", "FCMS <bob@example.org>", "F CMS",
+                   "N0CALL@lab.example", "bob@fcms.example.org", "", "@lab.example"):
             with self.subTest(to=to):
                 self.assertReason(express(to=to), "no service address")
 
     def test_non_ascii_lookalikes_rejected(self):
-        for local in ("\u0131nquiry", "SERV\u0131CE", "\u017fERVICE", "SERVICE\u200b", "\uff33\uff25\uff32\uff36\uff29\uff23\uff25"):
+        # Long s upper-cases to S in Python; fullwidth, Cyrillic dze and a zero-width space are not ASCII.
+        for local in ("FCM\u017f", "fcm\u017f", "\uff26\uff23\uff2d\uff33", "FCM\u0405", "FCMS\u200b"):
             with self.subTest(local=local):
-                self.assertReason(express(to=(local + "@winlink.org").encode("utf-8")), "no service address")
+                self.assertReason(express(to=(local + "@lab.example").encode("utf-8")), "no service address")
 
     def test_only_to_counts(self):
-        self.assertReason(express(to="bob@example.org", extra=["Cc: SERVICE@winlink.org"]), "no service address")
-        self.assertReason(express(to="bob@example.org", extra=["Bcc: SERVICE@winlink.org"]), "no service address")
-        self.assertReason(express(to="bob@example.org", extra=["Reply-To: SERVICE@winlink.org"]), "no service address")
-        self.assertReason(express(to="bob@example.org", extra=["From: SERVICE@winlink.org"]), "no service address")
+        self.assertReason(express(to="bob@example.org", extra=["Cc: FCMS@lab.example"]), "no service address")
+        self.assertReason(express(to="bob@example.org", extra=["Bcc: FCMS@lab.example"]), "no service address")
+        self.assertReason(express(to="bob@example.org", extra=["Reply-To: FCMS@lab.example"]), "no service address")
+        self.assertReason(express(to="bob@example.org", extra=["From: FCMS@lab.example"]), "no service address")
+
+    def test_to_with_cc_accepted_cc_alone_is_not(self):
+        self.assertReply(express(to="FCMS", extra=["Cc: bob@example.org"]))
+        self.assertReply(express(to="FCMS@lab.example", extra=["Cc: FCMS@lab.example"]))
+        for cc in ("FCMS", "fcms@lab.example", "SMTP:FCMS@lab.example"):
+            with self.subTest(cc=cc):
+                self.assertReason(express(to="N0CALL", extra=["Cc: " + cc]), "no service address")
 
     def test_missing_or_garbage(self):
         self.assertReason(express(to=None), "no service address")
@@ -206,22 +224,22 @@ class RecipientTests(Base):
         self.assertReason(bytes(range(256)) * 4, "no service address")
 
     def test_every_to_header_counts(self):
-        self.assertReply(express(to="bob@example.org", extra=["To: SERVICE@winlink.org"]))
-        self.assertReply(express(to="SERVICE@winlink.org", extra=["To: bob@example.org"]))
-        self.assertReply(express(to="bob@example.org", extra=["to: x@y.example", "TO: service@z.example"]))
+        self.assertReply(express(to="bob@example.org", extra=["To: FCMS@lab.example"]))
+        self.assertReply(express(to="FCMS@lab.example", extra=["To: bob@example.org"]))
+        self.assertReply(express(to="bob@example.org", extra=["to: x@y.example", "TO: fcms@z.example"]))
         self.assertReason(express(to="bob@example.org", extra=["To: alice@example.org"]), "no service address")
 
     def test_encoded_words_are_not_decoded_in_addresses(self):
-        # RFC 2047 section 5: encoded words are not allowed in addr-specs. This one decodes to SERVICE@x.
-        self.assertReason(express(to="=?utf-8?b?U0VSVklDRUB4?="), "no service address")
-        self.assertReason(express(to="=?utf-8?q?SERVICE?=@winlink.org"), "no service address")
+        # RFC 2047 section 5: encoded words are not allowed in addr-specs. This one decodes to FCMS@x.
+        self.assertReason(express(to="=?utf-8?b?RkNNU0B4?="), "no service address")
+        self.assertReason(express(to="=?utf-8?q?FCMS?=@lab.example"), "no service address")
         # In a display name it is just a name; the address decides.
-        self.assertReply(express(to="=?utf-8?q?Service_Desk?= <SERVICE@winlink.org>"))
-        self.assertReason(express(to="=?utf-8?q?SERVICE?= <bob@winlink.org>"), "no service address")
+        self.assertReply(express(to="=?utf-8?q?Node_Desk?= <FCMS@lab.example>"))
+        self.assertReason(express(to="=?utf-8?q?FCMS?= <bob@lab.example>"), "no service address")
 
     def test_unparseable_to_values_give_no_address_not_a_crash(self):
         for to in (b".?=\xff:\r\n ?=];;", b"\r\n ,a\r\n  >)\r\n <,\"", b"<<<>>>", b"(((", b'"', b",,,,",
-                   b"a@b@c@d", b"\x00\x00", b":;", b"SERVICE@x:;"):
+                   b"a@b@c@d", b"\x00\x00", b":;", b"FCMS@x:;"):
             with self.subTest(to=to):
                 try:
                     result = parse_menu_reply(express(to=to))
@@ -233,10 +251,103 @@ class RecipientTests(Base):
         self.assertReason(express(to=b"\r\n ,a\r\n  >)\r\n <,\""), "no service address")
 
     def test_one_unparseable_to_header_does_not_hide_another(self):
-        self.assertReply(express(to=b".?=\xff:\r\n ?=];;", extra=["To: SERVICE@winlink.org"]))
+        self.assertReply(express(to=b".?=\xff:\r\n ?=];;", extra=["To: FCMS@lab.example"]))
 
     def test_recipient_is_checked_before_the_subject_and_body(self):
         self.assertReason(express("junk", to="bob@example.org", subject="nothing"), "no service address")
+
+
+class ErrorCodeTests(Base):
+    """MenuReplyError.code: the subject's code once step 4 has passed, else None."""
+
+    def code_of(self, data):
+        with self.assertRaises(MenuReplyError) as caught:
+            parse_menu_reply(data)
+        return caught.exception.reason, caught.exception.code
+
+    def test_constructor(self):
+        self.assertIsNone(MenuReplyError("no code").code)
+        error = MenuReplyError("invalid choice", code="K7QX")
+        self.assertEqual((error.reason, error.code, str(error)), ("invalid choice", "K7QX", "invalid choice"))
+
+    def test_errors_after_the_code_carry_it(self):
+        cases = [
+            (express("WIKI Venus"), "invalid choice"),
+            (express("HELP", subject="Re: [test] x"), "invalid choice"),
+            (express(""), "empty choice"),
+            (express("5-4"), "invalid range"),
+            (express("1-21"), "too many choices"),
+            (express("caf\u00e9"), "non-ASCII"),
+            ((FIXTURES / "html_only.eml").read_bytes(), "no text part"),
+            (wrapped([part(b"Mg==\r\n", TEXT, "base64 (comment)")]), "unsupported transfer encoding"),
+        ]
+        for data, reason in cases:
+            with self.subTest(reason=reason):
+                expected_code = "TEST" if b"[test]" in data else "K7QX"
+                self.assertEqual(self.code_of(data), (reason, expected_code))
+
+    def test_errors_before_the_code_carry_none(self):
+        cases = [
+            (b"x" * 70000, "too large"),
+            (express(extra=["Subject: Re: [AB2C]"]), "malformed message"),
+            (express(to="N0CALL"), "no service address"),
+            (express(subject="Re: x"), "no code"),
+            (express(subject="Re: [K7QI]"), "invalid code"),
+            (express(subject="Re: [K7QX] [AB2C]"), "multiple codes"),
+        ]
+        for data, reason in cases:
+            with self.subTest(reason=reason):
+                self.assertEqual(self.code_of(data), (reason, None))
+
+
+class AddressArgumentTests(Base):
+    """The `address` keyword names the node's service address (docs/MENU-REPLY.md, "API")."""
+
+    def test_default_is_fcms(self):
+        self.assertEqual(parse_menu_reply(express(to="FCMS")), parse_menu_reply(express(to="FCMS"), address="FCMS"))
+        self.assertReason(express(to="NODEDESK"), "no service address")
+
+    def test_configured_address(self):
+        for address, to in (("NODEDESK", "nodedesk@lab.example"), ("NODEDESK", "SMTP:NodeDesk@lab.example"),
+                            ("RED-CROSS", "red-cross"), ("POLICE-99A", "Police-99A@lab.example"),
+                            ("ABC", "abc"), ("ABCDEFGHIJKL", "ABCDEFGHIJKL")):
+            with self.subTest(address=address, to=to):
+                self.assertEqual(parse_menu_reply(express(to=to), address=address), MenuReply("K7QX", (2,), False))
+
+    def test_configured_address_replaces_fcms(self):
+        for to in ("FCMS", "FCMS@lab.example", "SERVICE", "NODEDESKS", "NODE-DESK"):
+            with self.subTest(to=to):
+                with self.assertRaises(MenuReplyError) as caught:
+                    parse_menu_reply(express(to=to), address="NODEDESK")
+                self.assertEqual(caught.exception.reason, "no service address")
+
+    def test_address_is_keyword_only(self):
+        with self.assertRaises(TypeError):
+            parse_menu_reply(express(), "FCMS")
+
+    def test_address_must_be_a_string(self):
+        for address in (b"FCMS", None, 5, ["FCMS"]):
+            with self.subTest(address=address):
+                with self.assertRaises(TypeError):
+                    parse_menu_reply(express(), address=address)
+
+    def test_invalid_addresses_are_value_errors(self):
+        for address in ("", "fcms", "Fcms", "FC", "ABCDEFGHIJKLM", "FCMS-", "-FCMS", "A-B-C", "FC MS", " FCMS",
+                        "FCMS@lab.example", "SMTP:FCMS", "N0CALL", "N0CALL-10", "1FCMS", "FCM\u017f", "FCM\u0405",
+                        "INQUIRY", "QTH", "SERVICE", "SYSTEM", "OPTIONS", "POSTMASTER", "MAILER-DAEMON"):
+            with self.subTest(address=address):
+                with self.assertRaises(ValueError) as caught:
+                    parse_menu_reply(express(to="FCMS"), address=address)
+                self.assertNotIsInstance(caught.exception, MenuReplyError)
+
+    def test_arguments_are_checked_before_the_message(self):
+        with self.assertRaises(TypeError):
+            parse_menu_reply("Subject: x", address="SERVICE")
+        for data in (b"x" * 70000, b"", express(to="SERVICE")):
+            with self.subTest(data=data[:20]):
+                with self.assertRaises(ValueError) as caught:
+                    parse_menu_reply(data, address="SERVICE")
+                self.assertNotIsInstance(caught.exception, MenuReplyError)
 
 
 class SubjectTests(Base):
@@ -247,6 +358,11 @@ class SubjectTests(Base):
                         "Re: INQUIRY - WIKI Mercury: choose [k7qx]", "Re: x [K7qX] y"):
             with self.subTest(subject=subject):
                 self.assertReply(express(subject=subject))
+
+    def test_bracketed_words_are_codes(self):
+        # Whether the account holds such a menu is the robot's check (docs/INQUIRY-ROBOT.md, section 3).
+        self.assertReply(express(subject="Re: [TEST] WX"), "TEST")
+        self.assertReply(express(subject="[news] today"), "NEWS")
 
     def test_code_is_returned_upper_case(self):
         self.assertEqual(parse_menu_reply(express(subject="Re: [ab2c]")).code, "AB2C")
@@ -480,15 +596,15 @@ class TopLevelHeaderTests(Base):
         self.assertReply(wrapped([text]))
 
     def test_embedded_message_headers_are_not_read(self):
-        inner = b"Subject: Re: [AB2C]\r\nSubject: Re: [WXYZ]\r\nTo: SERVICE@winlink.org\r\n\r\n9\r\n"
+        inner = b"Subject: Re: [AB2C]\r\nSubject: Re: [WXYZ]\r\nTo: FCMS@lab.example\r\n\r\n9\r\n"
         attachment = part(inner, "message/rfc822", None, ["Content-Disposition: attachment"])
         self.assertReply(wrapped([part(b"2\r\n", TEXT, None), attachment]))
         self.assertReply(wrapped([attachment, part(b"2\r\n", TEXT, None)]))
 
     def test_code_and_address_in_parts_do_not_help(self):
-        inner = b"Subject: Re: [AB2C]\r\nTo: SERVICE@winlink.org\r\n\r\n9\r\n"
+        inner = b"Subject: Re: [AB2C]\r\nTo: FCMS@lab.example\r\n\r\n9\r\n"
         attachment = part(inner, "message/rfc822", None)
-        text = part(b"2\r\n", TEXT, None, ["Subject: Re: [AB2C]", "To: SERVICE@winlink.org"])
+        text = part(b"2\r\n", TEXT, None, ["Subject: Re: [AB2C]", "To: FCMS@lab.example"])
         self.assertReason(wrapped([text, attachment], subject="Re: nothing"), "no code")
         self.assertReason(wrapped([text, attachment], to="bob@example.org"), "no service address")
 
@@ -520,7 +636,7 @@ class SeparatorTests(Base):
         for line in (SEP + b" ", b" " + SEP, SEP + b"\t", SEP[:-1], SEP.replace(b"Message", b"message"),
                      SEP.replace(b"-----", b"----", 1), SEP.replace(b"sent", b"Sent"), SEP.replace(b"/11/", b"/1/"),
                      SEP.replace(b"00:00", b"0:00"), SEP.replace(b"2026", b"26"), SEP.replace(b"from", b"form"),
-                     SEP.replace(b"Message from SERVICE", b"Message from"), SEP + b"-"):
+                     SEP.replace(b"Message from FCMS", b"Message from"), SEP + b"-"):
             with self.subTest(line=line):
                 self.assertReason(self.reply_with(b"2\r\n" + line + b"\r\n3\r\n"), "invalid choice")
 
@@ -534,9 +650,9 @@ class SeparatorTests(Base):
                 self.assertReply(self.reply_with(b"2\r\n" + line + b"\r\n\xc3\xa9\r\n"))
 
     def test_non_ascii_digits_in_the_date_do_not_match(self):
-        line = "----- Message from SERVICE sent \u0662\u0660\u0662\u0666/11/25 00:00 -----".encode("utf-8")
+        line = "----- Message from FCMS sent \u0662\u0660\u0662\u0666/11/25 00:00 -----".encode("utf-8")
         self.assertReason(self.reply_with(b"2\r\n" + line + b"\r\n"), "non-ASCII")
-        line = "----- Message from SERVICE sent 2026/11/25 \uff10\uff10:00 -----".encode("utf-8")
+        line = "----- Message from FCMS sent 2026/11/25 \uff10\uff10:00 -----".encode("utf-8")
         self.assertReason(self.reply_with(b"2\r\n" + line + b"\r\n"), "non-ASCII")
 
     def test_line_endings(self):
@@ -796,11 +912,11 @@ class LimitAndHardeningTests(Base):
             head() + b"Content-Type: ;;;\r\n\r\n2\r\n",
             head() + b"Content-Transfer-Encoding: \r\n\r\n2\r\n",
             head() + b"Content-Type: text/plain; charset=\xff\xfe\r\n\r\n2\r\n",
-            b"Subject: Re: [K7QX]\r\nTo: SERVICE@x\r\n Subject: folded\r\n\r\n2\r\n",
-            b"To: " + b"SERVICE@x, " * 5000 + b"\r\nSubject: [K7QX]\r\n\r\n2\r\n",
-            b"Subject: " + b"=?utf-8?q?" * 2000 + b"[K7QX]\r\nTo: SERVICE@x\r\n\r\n2\r\n",
-            b"Subject: =?bogus?x?zzz?= [K7QX]\r\nTo: SERVICE@x\r\n\r\n2\r\n",
-            b"From nobody Tue Nov 25 00:00:00 2026\r\nSubject: [K7QX]\r\nTo: SERVICE@x\r\n\r\n2\r\n",
+            b"Subject: Re: [K7QX]\r\nTo: FCMS@x\r\n Subject: folded\r\n\r\n2\r\n",
+            b"To: " + b"FCMS@x, " * 5000 + b"\r\nSubject: [K7QX]\r\n\r\n2\r\n",
+            b"Subject: " + b"=?utf-8?q?" * 2000 + b"[K7QX]\r\nTo: FCMS@x\r\n\r\n2\r\n",
+            b"Subject: =?bogus?x?zzz?= [K7QX]\r\nTo: FCMS@x\r\n\r\n2\r\n",
+            b"From nobody Tue Nov 25 00:00:00 2026\r\nSubject: [K7QX]\r\nTo: FCMS@x\r\n\r\n2\r\n",
         ):
             with self.subTest(data=data[:60]):
                 try:

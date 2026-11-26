@@ -4,47 +4,128 @@
 
 A user asks for something, the node answers with the content or with a
 short numbered menu, and the user replies with their choice. It is intended
-to work from unmodified Winlink Express: requests are ordinary `INQUIRY`
-messages and choices are ordinary replies.
+to work from unmodified Winlink Express: requests are ordinary messages to
+the node's service address, and choices are ordinary replies.
 
 Every round trip costs a radio connection, possibly hours apart, so the
 design avoids asking when it doesn't need to: an exact match goes
 straight to the content, and choices can be given in advance.
 
-## Requests
+## Two layers
 
-A message to `INQUIRY` (any domain or none) with subject `REQUEST`, as
-in [INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md). Besides Winlink catalog
-IDs, URLs, `LIST` and `UPDATE_CAT`, a body line may be a **service
-command**:
+| Layer | Addresses | Carries |
+| --- | --- | --- |
+| Native | The node's service address: `FCMS` unless the sysop sets another (`node.service_address`, [INQUIRY-ROBOT.md](INQUIRY-ROBOT.md#configuration-file)) | `HELP` and the services below, menus and menu replies, later features |
+| Compatibility | `INQUIRY` and `QTH` | What Winlink's inquiry and position-report services take, nothing more: catalog IDs, `LIST`, `UPDATE_CAT`, URL items, position reports |
+
+- The part after `@` is ignored for all three addresses, and so is a
+  leading `SMTP:`. `FCMS`, `fcms@lab.example` and `SMTP:FCMS@lab.example`
+  are the same address.
+- Every reply comes From the service address, so a user's Reply goes back
+  to it.
+- The node does not present itself as Winlink and uses its own addresses
+  ([INDEPENDENT-IMPLEMENTATION.md](INDEPENDENT-IMPLEMENTATION.md#what-we-do-not-do)).
+  `SERVICE` is Winlink's own system address, so the node never sends from
+  it and never answers mail to it: such mail is ignored, with no reply.
+- The service address means something only on the node. A message to it
+  sent in a session with another server does not reach the node.
+
+## Native requests
+
+A message whose `To:` holds the service address. `Cc:` does not count, for
+this address and for `INQUIRY` and `QTH`: a message with the address only in
+`Cc:` is not robot mail.
+
+- **Subject:** any text. It is not read for commands; only a menu code
+  matters (see [Reading a reply](#reading-a-reply)). Whether Express
+  sends a message with an empty subject is UNVERIFIED; wl2k-go refuses
+  one (`Message.Validate`, `fbb/message.go` at 1d59b0a).
+- **Body:** one command per line, read by `inquiry.parse_commands`
+  ([INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md#service-address)):
+
+  ```text
+  VERB [arguments] [| choice]
+  ```
+
+  - `VERB` is one of the node's services, case-insensitive.
+  - Arguments are free text, at most 200 characters, whitespace collapsed.
+  - A choice after `|` picks from the menu the command would produce, so
+    one request can skip menus: `NEWS BBC | 3` is "headlines from BBC,
+    item 3".
+  - `HELP` lists the node's services; `HELP VERB` explains one.
+  - `;` starts a comment.
+- **Quoted text:** reading stops at the line Express puts above a quoted
+  original (`----- Message from ... sent ... -----`, see [Reading a
+  reply](#reading-a-reply)). A user can answer any reply with Reply, type
+  new commands above the quote, and send.
+- **Lines that are not commands** get one reply for the message, listing
+  each line and its reason (at most 20, then `...and N more.`): `unknown command` (the reply includes the
+  `HELP` list), `inquiry item` for `LIST`, `UPDATE_CAT` and web addresses
+  (the reply says they go to `INQUIRY` with subject `REQUEST`), or the
+  command rule the line breaks. Valid lines in the same message run.
+- **Empty body** (nothing above the quote but blank lines and comments):
+  the `HELP` reply.
+- **Menu code in the subject:** a subject token such as `[K7QX]` makes the
+  message a menu reply only when it is a menu this account holds, or when
+  the body is a valid choice (see [Reading a reply](#reading-a-reply)).
+  Otherwise the body is read as commands, so a bracketed word in a subject
+  (`[TEST]`, `[INFO]`) does not stop a request.
+
+## Compatibility requests
+
+Mail to `INQUIRY` and `QTH` behaves as Winlink's does
+([INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md)): `INQUIRY` with subject
+`REQUEST` takes catalog IDs, `LIST`, `UPDATE_CAT` and URLs; `QTH` takes a
+position report and sends no reply to a valid one.
+
+A line in `INQUIRY` mail that is one of the node's commands (a configured
+verb or `HELP`) is not run. The message gets one pointer reply, and its
+other items run as usual:
 
 ```text
-VERB [arguments]
+Subject: INQUIRY - REQUEST: send commands to FCMS
+
+These lines are FCMS commands and were not run:
+
+WX FN43
+HELP
+
+Send them in a new message to FCMS, one per line, with any subject.
+INQUIRY takes catalog IDs, LIST and web addresses.
 ```
 
-- `VERB` is one of the node's services, case-insensitive. Service verbs
-  are reserved: the node's catalog must not use them as IDs.
-- Arguments are free text, at most 200 characters, whitespace collapsed.
-- A choice after `|` picks from the menu the command would produce, so one
-  request can skip menus: `NEWS BBC | 3` is "headlines from BBC, item 3".
-- `HELP` lists the node's services; `HELP VERB` explains one.
-- An unknown verb is rejected like any invalid line, and the reply
-  includes the `HELP` list.
+Each line is the parsed command, written `VERB arguments | choice`. `FCMS`
+is the configured service address.
 
 ## Replies
 
-One message per item, from `SERVICE`, as Winlink does (observed in
-[INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md)).
+One message per item, from the service address.
 
-| Reply | Subject |
-| --- | --- |
-| Content | `INQUIRY - WIKI Mercury (planet)` |
-| Menu | `INQUIRY - WIKI Mercury: choose [K7QX]` |
-| Error | `INQUIRY - WIKI Mercury: not found` |
+| Layer | Reply | Subject |
+| --- | --- | --- |
+| Native | Content | `FCMS - WIKI Mercury (planet)` |
+| Native | Menu | `FCMS - WIKI Mercury: choose [K7QX]` |
+| Native | Error | `FCMS - WIKI Mercury: not found` |
+| Native | Lines not understood | `FCMS - lines not understood` |
+| Native | Unreadable message | `FCMS - message: <reason>` |
+| Native | Bad menu reply | `FCMS - menu reply: <reason>` |
+| Compatibility | Catalog item | `INQUIRY - <ID>`, or `INQUIRY - <url>` when the ID maps to a URL (observed) |
+| Compatibility | URL item | `INQUIRY - <url>` |
+| Compatibility | `LIST`, `UPDATE_CAT` | `INQUIRY: LIST` (observed) |
+| Compatibility | Commands sent to `INQUIRY` | `INQUIRY - REQUEST: send commands to FCMS` |
+| Compatibility | Lines not understood, bad request | `INQUIRY - REQUEST: <reason>` |
+| Compatibility | Invalid position report | `QTH - position report: <reason>` |
 
-Subjects are at most 80 characters; a long argument is cut with `...`
-before the code, never the code. The B2 limit on subject length is not
-confirmed yet. UNVERIFIED.
+The observed subjects are in [INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md#observed-exchange-production-cms-2026-11-24).
+`FCMS` stands for the configured address in every subject. Subjects are
+at most 80 characters; a long label is cut with `...` before the suffix
+and code, never the suffix or code. wl2k-go refuses subjects over 128
+(`Message.Validate`), so 80 leaves a margin.
+
+A catalog ID may map to a node command (`cmd:` in the catalog). The user
+sent only an ID, so this stays within the compatibility layer; any menu in
+the reply has a code like any other, and a Reply to it goes to the
+service address.
 
 Content bodies are rendered by `federated_cms.plaintext.render`: title,
 `Source:`, `Fetched:`, then the text.
@@ -60,7 +141,7 @@ Content bodies are rendered by `federated_cms.plaintext.render`: title,
 4. Freddie Mercury
 
 Reply with the numbers you want, for example 2, 1 3 or 2-4.
-Each number is the same as sending: WIKI <its title>
+Each number is the same as sending to FCMS: WIKI <its title>
 Menu K7QX for N0CALL, valid until 2026-12-02 01:00 UTC.
 ```
 
@@ -80,7 +161,7 @@ Menu K7QX for N0CALL, valid until 2026-12-02 01:00 UTC.
 - Stored with the options, the callsign that asked, and an expiry
   (default 7 days, set by the sysop). Only that callsign can use it.
 - An expired or unknown code gets a reply saying so, with the menu's
-  commands if the node still has them.
+  commands if the node still has them, to send to the service address.
 
 ### Reading a reply
 
@@ -117,16 +198,35 @@ Subject: INQUIRY - <original subject>
   UTF-8 bytes (`=C2=A0`), so the declared charset is not reliable for
   the quoted text.
 
+That capture is a reply to Winlink's own `SERVICE`. The node's replies
+come from the service address instead, so a Reply goes to it. How Express
+fills in `To:` and the separator line for a reply to `FCMS` is UNVERIFIED
+and is a lab test ([ON-AIR-TESTS.md](ON-AIR-TESTS.md)); the rules below
+do not depend on either.
+
 **Rules:**
 
-- The message is to `SERVICE` (any domain), and the subject, after any
-  number of leading `Re:` (case-insensitive), contains `[CODE]`.
+- The message is `To:` the service address (any domain), and its subject
+  contains `[CODE]`, with or without leading `Re:`. Mail to `SERVICE` is
+  not a menu reply; it is ignored.
 - The choice is read from the text part's lines before the first line
-  matching `^----- Message from .+ sent \d{4}/\d{2}/\d{2} \d{2}:\d{2} -----$`
-  (or the whole part when there is none). Blank lines are skipped. The
-  remaining lines must hold only numbers, ranges such as `2-4`, or
-  `MORE`, separated by spaces or commas, in ASCII. Anything else makes
-  the reply invalid, and the user gets the menu again.
+  matching `----- Message from .+ sent [0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2} -----`
+  in full (or the whole part when there is none). Blank lines are
+  skipped. The remaining lines must hold only numbers, ranges such as
+  `2-4`, or `MORE`, separated by spaces or commas, in ASCII.
+- Which message is a menu reply:
+
+  | Subject | Account holds that menu | Body is a valid choice | Handled as |
+  | --- | --- | --- | --- |
+  | One valid code | yes | yes | Menu reply |
+  | One valid code | yes | no | Menu reply error: names the reason, says to answer with numbers or `MORE`, and to send commands in a new message |
+  | One valid code | no | yes | "Menu not found" reply |
+  | One valid code | no | no | Commands (`parse_commands`) |
+  | No code, a code outside the alphabet, or several codes | | | Commands |
+
+  So `Re: [TEST] WX` with body `WX FN43` runs `WX FN43` unless the
+  account holds a menu `TEST`. A code is a handle bound to the account
+  (see [Menu codes](#menu-codes)); another account's code is "not held".
 - Only those lines are decoded and read, so the quoted text's encoding
   does not matter.
 
@@ -190,7 +290,7 @@ Steps:
    `section=<index>`.
 6. **Full article:** `action=parse` without `section`, cleaned, then
    split at line breaks into parts of at most `max_chars`, one message
-   each, subject `INQUIRY - WIKI Mercury (planet) (part 2 of 6)`. Every
+   each, subject `FCMS - WIKI Mercury (planet) (part 2 of 6)`. Every
    part counts against the callsign's message limit. Needs a `split`
    function beside the extractor's truncation (a change to
    [TEXT-EXTRACTOR.md](TEXT-EXTRACTOR.md)).
@@ -454,11 +554,12 @@ Set per node, applied per callsign:
 
 ## Compatibility
 
-- Requests and choices use only what Express already does: a message to
-  `INQUIRY`, and Reply.
-- Service verbs are not added to the Winlink catalog file. How Express
-  reads a `LIST` reply is untested (see ON-AIR-TESTS.md), so services
-  are listed only through `HELP` for now.
+- Requests and choices use only what Express already does: a new message
+  to an address, and Reply. Whether Express accepts `FCMS` and
+  `FCMS@<domain>` as addresses is a lab test ([ON-AIR-TESTS.md](ON-AIR-TESTS.md)).
+- Service verbs are not added to the catalog file the node sends for
+  `LIST`. How Express reads a `LIST` reply is untested (see
+  ON-AIR-TESTS.md), so services are listed only through `HELP`.
 
 ## Open questions
 

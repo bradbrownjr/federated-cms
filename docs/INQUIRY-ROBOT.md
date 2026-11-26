@@ -2,15 +2,18 @@
 
 **Status:** design for review. Nothing here is implemented.
 
-The robot takes mail accepted from a B2F session and addressed to
-`INQUIRY`, `QTH` or `SERVICE`, works out what was asked, answers from
-local data or the cache, fetches from the Internet when it has to, and
-queues replies from `SERVICE` in the sender's mailbox for their next
-connection. It ties together pieces specified elsewhere:
+The robot takes mail accepted from a B2F session and addressed to the
+node's service address (`FCMS` unless the sysop sets another), `INQUIRY`
+or `QTH`, works out what was asked, answers from local data or the cache,
+fetches from the Internet when it has to, and queues replies from the
+service address in the sender's mailbox for their next connection. The
+service address carries the node's own commands and menus; `INQUIRY` and
+`QTH` behave as Winlink's do (the two layers,
+[INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#two-layers)). It ties together pieces specified elsewhere:
 
 | Piece | Spec and code |
 | --- | --- |
-| Address match, `INQUIRY` and `QTH` parsing, service commands | `docs/INQUIRY-ADAPTER.md`, `src/federated_cms/inquiry.py` |
+| Address match, service address check, `INQUIRY`, `QTH` and native command parsing | `docs/INQUIRY-ADAPTER.md`, `src/federated_cms/inquiry.py` |
 | Menu-reply parsing | `docs/MENU-REPLY.md`, `src/federated_cms/menu_reply.py` |
 | Services, menus, menu codes, reply rules | `docs/INTERACTIVE-SERVICES.md` |
 | Text extraction and `render` | `docs/TEXT-EXTRACTOR.md`, `src/federated_cms/plaintext.py` |
@@ -42,10 +45,13 @@ production mailbox unchanged.
 
 The B2F session thread does two cheap things:
 
-1. **Classify** with a pure function `robot_addresses(raw) ->
-   frozenset[str]`: the robot local parts found in `To:` and `Cc:`, using
+1. **Classify** with a pure function `robot_addresses(raw, *,
+   service_address) -> frozenset[str]`: which of the service address,
+   `INQUIRY` and `QTH` are local parts of addresses in `To:` (every `To:`
+   header; `Cc:` does not count), using
    `address_local_part` (`src/federated_cms/inquiry.py:94-101`).
-   It never raises; an unreadable header gives an empty set.
+   It never raises; an unreadable header gives an empty set. `SERVICE` is
+   not a robot address, so mail to it is not queued and gets no reply.
 2. **Enqueue** one `robot_inbox` row (`INSERT OR IGNORE`, key
    `(account, mid)`) in the same transaction that stores the inbound
    bytes, when the set is not empty.
@@ -103,7 +109,7 @@ takes effect.
 [node]
 name = "N1ABC-10"                 # in Mbo: and "via <name>" footers
 contact = "sysop@example.org"     # User-Agent contact: email or http(s) URL
-reply_from = "SERVICE"
+service_address = "FCMS"         # native address; every reply comes from it
 
 [robot]
 menu_expiry_days = 7
@@ -158,6 +164,11 @@ is the node's own: Winlink's catalog file holds no URLs
 
 The robot prints every problem found and refuses to start when:
 
+- `node.service_address` fails `inquiry.check_service_address`: 3 to 12
+  upper-case letters, or letters, one `-`, then letters and digits; not
+  `INQUIRY`, `QTH`, `SERVICE`, `SYSTEM`, `OPTIONS`, `POSTMASTER` or
+  `MAILER-DAEMON` ([INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md#service-address),
+  which records the source and what is UNVERIFIED);
 - a table or key is unknown (catches `menu_expiry_day`);
 - a `handler` is not in the handler registry, a fixed `dict` in code from
   name to class (config cannot name a module, path or function);
@@ -206,13 +217,13 @@ For every message:
 
 1. Loop and block checks (section 9). Failing messages are `ignored`
    with a reason code and get no reply.
-2. Headers `From`, `To`, `Cc`, `Subject`, `Date`, `X-Location` from a
+2. Headers `From`, `To`, `Subject`, `Date`, `X-Location` from a
    bounded reader. `src/federated_cms/b2_message.py:30-50` already splits headers; it needs
    a public function returning them.
 3. Body decoded strictly as UTF-8, else windows-1252; the parsers reject
    non-ASCII item lines anyway (`docs/INQUIRY-ADAPTER.md:52-56`).
 4. Request limit (section 6). Then each robot address is handled once, in
-   the order `QTH`, `INQUIRY`, `SERVICE`, so a position sent with a
+   the order `QTH`, `INQUIRY`, service address, so a position sent with a
    request is on file before `WX` reads it.
 
 ### `INQUIRY`
@@ -221,25 +232,22 @@ For every message:
 capped at 32 items with repeats removed (`docs/INQUIRY-ADAPTER.md:57-59`). A
 bad subject or empty body (`InquiryError`) gets one error reply. The
 robot calls `parse_inquiry(subject, body, services=...)` with the
-configured verbs plus `HELP` (the parser reserves only `LIST` and
-`UPDATE_CAT`). A line whose first word is one of those verbs is kind
-`service`: `value` is the verb, `arguments` the text before `|`, `choice`
-the text after it or `None`. A service verb wins over a catalog ID of the
-same name. Recognition order is a service verb, `LIST`/`UPDATE_CAT`, URL,
-catalog ID.
+configured verbs plus `HELP`, only so that command lines are recognised
+and pointed out instead of being judged as catalog IDs. Recognition order
+is a service verb, `LIST`/`UPDATE_CAT`, URL, catalog ID.
 
 | Item | Action | Reply subject |
 | --- | --- | --- |
 | `list`, `update_catalog` | Catalog from the loaded TSV, no network | `INQUIRY: LIST` (observed, `docs/INQUIRY-ADAPTER.md:94-96`) |
-| `service` `HELP` with no / one argument (`HELP WX`) | Verbs with descriptions / that handler's `help()` | `INQUIRY - HELP` / `INQUIRY - HELP WX` |
-| `catalog` | `text:` file content; `url:` as a URL item; `cmd:` as a service item (parsed with `parse_inquiry`); unknown ID is an error | `INQUIRY - <url>` for `url:` (observed, `docs/INQUIRY-ADAPTER.md:76-78`), else `INQUIRY - <ID>` |
+| `catalog` | `text:` file content; `url:` as a URL item; `cmd:` as a native command; unknown ID is an error | `INQUIRY - <url>` for `url:` (observed, `docs/INQUIRY-ADAPTER.md:76-78`), else `INQUIRY - <ID>` |
 | `url` | Error if `url_items` is off; else cache, `extract`, `render` | `INQUIRY - <url>` |
-| other `service` | Handler `step()` loop | `docs/INTERACTIVE-SERVICES.md:39-43` |
+| `service`, `HELP` included | Not run. All of the message's command lines go into one pointer reply ([INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#compatibility-requests)) | `INQUIRY - REQUEST: send commands to <service address>` |
 
 Rejected lines get **one** reply for the message: line number, cleaned
-text (`RejectedLine.text`) and reason (`RejectedLine.reason`, which names
-the broken service-line rule such as `arguments too long`) for each, then
-the `HELP` list.
+text (`RejectedLine.text`) and reason (`RejectedLine.reason`) for each of
+the first 20, then `...and <count - 20> more.` when there are more (the
+cap of the slice 1 contract), then one line saying what `INQUIRY` takes
+and that commands go to the service address.
 Which `LIST` format Express accepts is untested
 (`docs/INQUIRY-ADAPTER.md:121-124`); slice 1 sends a readable list and the lab
 tries the `CATEGORY|ID|DESCRIPTION|SIZE|DATE` form.
@@ -251,46 +259,73 @@ coordinates replaces the account's `robot_positions` row unless its
 `DATE` is older than the stored one (sessions can deliver out of order);
 one without coordinates is not stored. A valid report gets **no reply**
 (ASSUMPTION: as Winlink; saves airtime). An invalid one gets one error
-reply with the `PositionReportError` reason, never the body. The position
+reply, subject `QTH - position report: <reason>`, with the
+`PositionReportError` reason and never the body. Whether Winlink answers
+an invalid report is UNVERIFIED. The position
 serves only that account's `WX` and `ALERTS` with no place given
 (`docs/INTERACTIVE-SERVICES.md:300`), is never shown to anyone else, and is
 deleted after 90 days. `X-Location` (`docs/INTERACTIVE-SERVICES.md:133-136`)
 is used for that message only and not stored.
 
-### `SERVICE` (menu replies)
+### Service address (native requests and menu replies)
 
-The robot picks `SERVICE` mail by `address_local_part` of the recipient
-(`service_for` returns only `INQUIRY` and `QTH`).
+The robot picks this mail by `address_local_part` of each `To:` address
+against `node.service_address` (`service_for` returns only `INQUIRY` and
+`QTH`).
 
-1. `parse_menu_reply(raw_message)` (`src/federated_cms/menu_reply.py`; `docs/MENU-REPLY.md`) takes
-   the whole stored MIME message as bytes, not a subject and body. It
-   checks the `To` address, finds the one `[CODE]` anywhere in the
-   subject, reads the first `text/plain` part and only the lines before
-   the quoted-original separator. It returns `MenuReply(code, numbers,
-   more)` or raises `MenuReplyError` with a `reason`. Messages over
-   65,536 bytes are refused (`too large`), the same size as
+1. **Read the menu fields.** `parse_menu_reply(raw_message,
+   address=service_address)` (`src/federated_cms/menu_reply.py`;
+   `docs/MENU-REPLY.md`) takes the whole stored MIME message as bytes,
+   not a subject and body. It checks the `To` address, finds the one
+   `[CODE]` anywhere in the subject, reads the first `text/plain` part
+   and only the lines before the quoted-original separator. It returns
+   `MenuReply(code, numbers, more)` or raises `MenuReplyError` with a
+   `reason` and, when the subject held one valid code, that `code`.
+   Messages over 65,536 bytes are refused (`too large`), the same size as
    `MAX_MESSAGE`; the robot passes the stored message unchanged.
-2. `no code`, `multiple codes` or `invalid code`: one error reply saying
-   requests go to `INQUIRY` with subject `REQUEST`. Any other
-   `MenuReplyError` (`too large`, `malformed message`, `no text part`,
-   `unsupported transfer encoding`, `non-ASCII`, `empty choice`,
-   `invalid choice`, `invalid range`, `too many choices`): one error
-   reply naming the reason and saying to answer with option numbers,
-   such as `2` or `1-3`, or `MORE`. The parser does not return the code
-   with an error, so the menu is not sent again. Both kinds count as
-   invalid (section 6). `no service address` cannot happen for mail the
-   robot routed to `SERVICE`; it is logged as `internal_error`.
-3. Look up `(account, code)`. Another callsign's code is simply not
-   found; nothing distinguishes "someone else's" from "unknown".
-4. Unknown or expired: say so, and while the row exists (until
-   `purge_after`) list its options as full commands to resend to
-   `INQUIRY`.
-5. A number with no stored option: one error reply naming the numbers
-   and the menu's valid range.
-6. Valid: each number (sorted, no repeats, at most 20 per reply) becomes
-   an item running the option's stored command as if sent to `INQUIRY`
-   (`2-21` is 20 items).
-7. `MORE`: the next page (section 4).
+2. **Decide menu reply or commands**, looking up `(account, code)` first
+   whenever there is a code. Another callsign's code is simply not found;
+   nothing distinguishes "someone else's" from "unknown".
+
+   | Parser result | `(account, code)` stored | Then |
+   | --- | --- | --- |
+   | `MenuReply` | yes | Steps 4 to 7 |
+   | `MenuReply` | no | One reply: no menu `<code>` for this callsign; to send commands, write a new message to the service address |
+   | `MenuReplyError` with `code` (`no text part`, `unsupported transfer encoding`, `non-ASCII`, `empty choice`, `invalid choice`, `invalid range`, `too many choices`) | yes | Step 3 |
+   | `MenuReplyError` with `code` | no | Commands (step 5) |
+   | `no code`, `invalid code`, `multiple codes` | | Commands (step 5) |
+   | `too large`, `malformed message` | | One error reply, subject `FCMS - message: <reason>` |
+   | `no service address` | | Cannot happen for mail routed here; logged as `internal_error` |
+
+   A subject word in brackets, such as `[TEST]`, is code-shaped and
+   becomes a code (`MENU-REPLY.md`, step 4), so this lookup is what keeps
+   it from blocking a request. A row kept for an expired menu (until
+   `purge_after`) counts as stored.
+3. **Menu reply error:** one reply naming the reason and saying to answer
+   with option numbers, such as `2` or `1-3`, or `MORE`, and to send
+   commands in a new message. Subject `FCMS - menu reply: <reason>`. It
+   counts as invalid (section 6).
+4. **Expired:** say so and list the options as full commands to send to
+   the service address. **A number with no stored option:** one error
+   reply naming the numbers and the menu's valid range. **Valid:** each
+   number (sorted, no repeats, at most 20 per reply) becomes an item
+   running the option's stored command as if sent to the service address
+   (`2-21` is 20 items). **`MORE`:** the next page (section 4).
+5. **Commands.** `parse_commands(body, services=<configured verbs plus
+   HELP>)` ([INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md#parse_commands)), on
+   the B2 body as for `INQUIRY`. Each item runs as below; rejected lines
+   get one reply for the message listing at most 20 (line, text and
+   reason), then `...and <count - 20> more.`, then the `HELP` list; an
+   empty request gets the `HELP` reply; `InquiryError` (`body too large`,
+   `invalid body`) gets one error reply, subject `FCMS - message:
+   <reason>`.
+
+   | Item | Action | Reply subject |
+   | --- | --- | --- |
+   | `HELP` with no / one argument (`HELP WX`) | Verbs with descriptions / that handler's `help()` | `FCMS - HELP` / `FCMS - HELP WX` |
+   | other `service` | Handler `step()` loop | [INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#replies) |
+
+`FCMS` in these subjects is the configured service address.
 
 ## 4. Menu-code store
 
@@ -351,7 +386,7 @@ class Need:        fetches: tuple[FetchSpec, ...]
 class MenuOption:  label: str; command: str            # command e.g. "WIKI Mercury (planet)"
 class Menu:        title: str; options: tuple[MenuOption, ...]
                    listed_in_body: bool = False   # True: the body already prints the options
-class ReplyPart:   label: str              # subject text after "INQUIRY - "
+class ReplyPart:   label: str              # subject text after "<prefix> - "
                    body: str               # ASCII, "\n" endings
                    menu: Menu | None       # stored and coded by the robot; rendered by it unless listed_in_body
 class Answer:      parts: tuple[ReplyPart, ...]; error: str | None = None
@@ -513,7 +548,7 @@ CREATE TABLE robot_notices (
 ```
 
 **What the user receives:** one notice per limit per window, subject
-`INQUIRY - limit reached`, not itself counted:
+`FCMS - limit reached` (the service address), not itself counted:
 
 ```text
 Limit reached for N0CALL: 100 reply messages per day.
@@ -523,7 +558,8 @@ The limit resets at 00:00 UTC. Send these again after that.
 
 Items cut off are listed as commands so they can be resent. Later
 requests in the same window are marked `limited` and get nothing. After
-`invalid_per_day` bad messages (bad subject, no menu code, empty body),
+`invalid_per_day` bad messages (an `INQUIRY` request with a bad subject or
+no items, an unreadable native message, a bad menu reply),
 further bad messages that day get no reply.
 
 **Abuse handling:**
@@ -550,26 +586,32 @@ first ("this is defined to be the first value"), then a fixed order:
 Mid: 4K7QZ2XWPA5M
 Date: 2026/11/25 04:33
 Type: Private
-From: SERVICE
+From: FCMS
 To: N0CALL
-Subject: INQUIRY - WX FN43
+Subject: FCMS - WX FN43
 Mbo: N1ABC-10
 Body: 1187
 ```
 
 - `Date` uses wl2k-go's `DateLayout`, `2006/01/02 15:04`, in UTC.
-- `From: SERVICE` without a domain; the node never uses a `winlink.org`
-  address as its own (`docs/INDEPENDENT-IMPLEMENTATION.md:61-62`).
+- `From:` is the service address without a domain, for every reply,
+  `INQUIRY` and `QTH` replies included, so a user's Reply goes back to
+  it. The node never sends from `SERVICE`, Winlink's own system address,
+  and never uses a `winlink.org` address as its own
+  ([INDEPENDENT-IMPLEMENTATION.md](INDEPENDENT-IMPLEMENTATION.md#what-we-do-not-do)).
 - `To:` is the B2F account, never the inbound `From:` (section 9).
 - `Type: Private` is an ASSUMPTION. wl2k-go also defines `Service`,
   `Inquiry`, `Position Report`, `Option` and `System` (`fbb/message.go`);
   how Express treats each is UNVERIFIED and is a lab test.
 - No attachments.
 
-**Subject:** `INQUIRY - <label>[: <suffix>]`, suffixes such as
-`choose [CODE]`, `not found`, `(part 2 of 6)`
-(`docs/INTERACTIVE-SERVICES.md:39-47`). At most 80 characters: the label is
-cut with `...`, the suffix and code never. wl2k-go rejects subjects over
+**Subject:** `<prefix> - <label>[: <suffix>]`. The prefix is `INQUIRY`
+or `QTH` for compatibility replies and the service address for native
+ones; suffixes are such as `choose [CODE]`, `not found`, `(part 2 of 6)`;
+`INQUIRY: LIST` is fixed
+([INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#replies)). At most 80
+characters: the label is cut with `...`, the prefix, suffix and code
+never. wl2k-go rejects subjects over
 128 (`Message.Validate`), so 80 leaves margin. Printable ASCII only; any
 other character in a label becomes `?`.
 
@@ -612,7 +654,8 @@ service grant.
 | Fetch failed, stale data usable | Item | Content with age note |
 | Fetch failed, no data, `max_wait` passed | Item | "could not reach <source>; try later" |
 | Handler raised, or 8 steps without an answer | Item | "could not process this item (ref 1234)" |
-| Bad subject, empty body, no menu code | Message | One error reply |
+| `INQUIRY` request with a bad subject or no items, unreadable native message, bad menu reply | Message | One error reply |
+| Mail to `SERVICE` only | Message | Nothing; not queued |
 | Robot crash, store unavailable | Message | Nothing; retried. After 3 attempts, "could not process your message (ref ...)" |
 | Loop, block, limit after notice | Message | Nothing |
 
@@ -714,16 +757,19 @@ its item after 30 days.
 
 1. Only messages from an authenticated B2F session are queued. A future
    route (SMTP, federation) reaches the robot only with its own design.
-2. Ignored when the account or the `From:` local part is `SERVICE`,
-   `INQUIRY`, `QTH`, `SYSTEM`, `MAILER-DAEMON`, `POSTMASTER` or the node's
-   name.
+2. Ignored when the account or the `From:` local part is the service
+   address, one of `inquiry.RESERVED_ADDRESSES` (`INQUIRY`, `QTH`,
+   `SERVICE`, `SYSTEM`, `OPTIONS`, `POSTMASTER`, `MAILER-DAEMON`) or the
+   node's name.
 3. Ignored when the inbound MID is in `robot_replies` (one of ours).
 4. Ignored when `Auto-Submitted` is present with a value other than `no`
    (RFC 3834, section 5). Whether Winlink clients send it is UNVERIFIED;
    the check is free.
 5. Replies go only to the account's mailbox on this node, never by SMTP,
    never to `From:`. No reply is sent about a reply.
-6. Limits (section 6) bound any loop not caught above.
+6. Mail to `SERVICE` is never queued or answered, and the node never
+   sends from `SERVICE`.
+7. Limits (section 6) bound any loop not caught above.
 
 ### Spoofed callsigns
 
@@ -767,16 +813,22 @@ against the loopback B2F server.
    headers, subjects, CRLF, `message_mid` check), outbox deposit,
    rejected-lines reply, loop rules, config with refusal on errors,
    catalog `text:` targets. Tests: crash at each commit boundary,
-   duplicate proposals, replay, bad config. Lab: Express sends `HELP`,
-   `LIST` and a static ID and gets the replies; record how it shows each
+   duplicate proposals, replay, bad config. Lab: Express sends `HELP` to
+   the service address, `LIST` and a static ID to `INQUIRY`, and gets the
+   replies; record how it shows each
    `Type:` and our `LIST`.
 2. **`QTH`.** Positions, invalid-report reply, retention.
 3. **Cache, fetch worker, URL items and `url:` entries.** One task per
    key, per-host serialisation, backoff, stale answers with age,
    `max_wait`, scheduled fetches, janitor; time driven by the fake clock.
-4. **Menus and `SERVICE` replies.** Codes, expiry, `MORE`, numbers run as
+4. **Menus and menu replies.** Codes, expiry, `MORE`, numbers run as
    commands, expired-menu replies; tested with a test-only handler that
-   returns a fixed menu.
+   returns a fixed menu. The table in section 3 ("Decide menu reply or
+   commands") is tested row by row, including: `Re: [TEST] x` with body
+   `HELP` from an account holding no menu `TEST` gets the `HELP` reply;
+   the same message from an account holding menu `TEST` gets the menu
+   reply error; `Re: [TEST]` with body `2` and no menu `TEST` gets the
+   "no menu" reply; another account's code with body `HELP` runs `HELP`.
 5. **`WX`, `ALERTS`, `SOLAR`.** Handlers that call the `wx_format`
    functions; NWS and SWPC fixtures are in `tests/fixtures/`; place from
    QTH or `X-Location`.
@@ -807,15 +859,32 @@ is read. A service line has `kind="service"`, `value` the verb,
 `InquiryError` is raised for a bad subject, empty body or empty request.
 `service_for` returns only `INQUIRY` and `QTH`.
 
+**Service address and native commands** (`src/federated_cms/inquiry.py`,
+`docs/INQUIRY-ADAPTER.md`, "Service address"):
+
+```python
+DEFAULT_SERVICE_ADDRESS = "FCMS"
+RESERVED_ADDRESSES: frozenset[str]   # INQUIRY QTH SERVICE SYSTEM OPTIONS POSTMASTER MAILER-DAEMON
+check_service_address(address: str) -> str
+parse_commands(body: str, *, services: frozenset[str]) -> InquiryRequest
+```
+
+`parse_commands` reads only the lines above Express's quoted-original
+separator; every item is kind `service`; other lines are rejected as
+`unknown command`, `inquiry item` or `invalid characters`; an empty body
+gives an empty request, not an error.
+
 **Menu replies** (`src/federated_cms/menu_reply.py`, `docs/MENU-REPLY.md`):
 
 ```python
-parse_menu_reply(message: bytes) -> MenuReply
+parse_menu_reply(message: bytes, *, address: str = "FCMS") -> MenuReply
 MenuReply(code: str, numbers: tuple[int, ...], more: bool)
-MenuReplyError(ValueError)   # .reason, one of the listed reasons
+MenuReplyError(ValueError)   # .reason, one of the listed reasons; .code, the subject's code or None
 ```
 
 `message` is the whole MIME message; anything else raises `TypeError`.
+`address` is the service address; it is checked with
+`check_service_address`, and `SERVICE` is refused.
 Only `MenuReplyError` escapes for bytes. `numbers` are sorted, unique,
 1 to 999, at most 20; empty when `more`.
 
@@ -838,9 +907,10 @@ xray_class(flux: int | float) -> str
 
 **What the robot owns:**
 
-- The verb table and the `services` set passed to `parse_inquiry`
-  (configured verbs plus `HELP`), and `HELP` output.
-- Routing by recipient (`INQUIRY`, `QTH`, `SERVICE`) and the stored raw
+- The verb table and the `services` set passed to `parse_commands` and
+  `parse_inquiry` (configured verbs plus `HELP`), `HELP` output, and the
+  pointer reply for commands sent to `INQUIRY`.
+- Routing by recipient (service address, `INQUIRY`, `QTH`) and the stored raw
   message handed to `parse_menu_reply`.
 - Menu codes, the `robot_menus` rows, number-to-command lookup, expiry,
   paging and `MORE`, and rendering the code and reply instructions. A
@@ -873,6 +943,12 @@ Made on 2026-11-25:
 6. URL items: on by default; the sysop can turn them off.
 7. `WIKI` and `NEWS` split long content; other services truncate with
    the extractor's note.
+8. Two layers. The node's own syntax (`HELP`, services, menus and menu
+   replies) goes to its service address, `node.service_address`, default
+   `FCMS`. `INQUIRY` and `QTH` take what Winlink's services take and
+   nothing more; a command sent to `INQUIRY` gets a pointer reply. Every
+   reply comes from the service address. Mail to `SERVICE` is not
+   answered.
 
 ## Open questions
 

@@ -1,5 +1,6 @@
-"""Contract tests for Winlink-style service messages (INQUIRY catalog requests
-and QTH position reports). See docs/INQUIRY-ADAPTER.md for sources.
+"""Contract tests for INQUIRY catalog requests, QTH position reports and
+messages to the node's own service address (FCMS by default). See
+docs/INQUIRY-ADAPTER.md for sources.
 
 These tests define the behaviour of federated_cms.inquiry. Do not change them
 to make an implementation pass.
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 import math
 import unittest
 
+from federated_cms import inquiry
 from federated_cms.inquiry import (
     InquiryError,
     InquiryItem,
@@ -444,7 +446,8 @@ class PositionReportHardeningTests(unittest.TestCase):
 
 
 class ServiceCommandTests(unittest.TestCase):
-    """Service commands in INQUIRY bodies; see docs/INQUIRY-ADAPTER.md."""
+    """Service commands recognised in INQUIRY bodies, so the robot can point
+    them to the service address; see docs/INQUIRY-ADAPTER.md."""
 
     SERVICES = frozenset({"WIKI", "NEWS", "WX", "SOLAR"})
 
@@ -673,6 +676,253 @@ class ServiceCommandTests(unittest.TestCase):
             with self.subTest(services=services):
                 with self.assertRaises(TypeError):
                     parse_inquiry("REQUEST", "WIKI", services=services)
+
+
+# Names added for the native service address are looked up on the module inside
+# each test, so a missing one fails only these tests.
+
+SEP = "----- Message from FCMS sent 2026/11/25 00:00 -----"
+
+
+class ServiceAddressTests(unittest.TestCase):
+    """check_service_address; see docs/INQUIRY-ADAPTER.md, "Service address"."""
+
+    def test_default_and_reserved(self):
+        self.assertEqual(inquiry.DEFAULT_SERVICE_ADDRESS, "FCMS")
+        self.assertEqual(inquiry.check_service_address("FCMS"), "FCMS")
+        self.assertEqual(inquiry.RESERVED_ADDRESSES, frozenset(
+            {"INQUIRY", "QTH", "SERVICE", "SYSTEM", "OPTIONS", "POSTMASTER", "MAILER-DAEMON"}))
+
+    def test_valid_addresses(self):
+        for address in ("FCMS", "ABC", "ABCDEFGHIJKL", "A-1", "NODE-1", "RED-CROSS", "POLICE-99A", "MLBSHELTER",
+                        "NODEDESK", "WX-9", "AB-CDEFGHIJ", "AB-CDEFGHIJK", "NODE-1A"):
+            with self.subTest(address=address):
+                self.assertEqual(inquiry.check_service_address(address), address)
+
+    def test_invalid_addresses(self):
+        for address in ("", "fcms", "Fcms", "FC", "AB", "ABCDEFGHIJKLM", "AB-CDEFGHIJKL", "FCMS-", "-FCMS",
+                        "A-B-C", "FC MS", " FCMS", "FCMS ", "FCMS\n", "FCMS@lab.example", "SMTP:FCMS", "FC_MS",
+                        "FC.MS", "N0CALL", "N0CALL-10", "1FCMS", "FCM\u017f", "FCM\u0405", "\uff26\uff23\uff2d\uff33",
+                        "FCMS-\u0661", "NODE-a", "NODE-1a", "node-1", "INQUIRY", "QTH", "SERVICE", "SYSTEM", "OPTIONS", "POSTMASTER",
+                        "MAILER-DAEMON"):
+            with self.subTest(address=address):
+                with self.assertRaises(ValueError):
+                    inquiry.check_service_address(address)
+
+    def test_non_strings(self):
+        for address in (None, b"FCMS", 5, ["FCMS"]):
+            with self.subTest(address=address):
+                with self.assertRaises(TypeError):
+                    inquiry.check_service_address(address)
+
+    def test_mail_forms_reduce_to_the_address(self):
+        # What a client may put in To:, judged with the existing helper.
+        for to in ("FCMS", "fcms", "FCMS@lab.example", "SMTP:fcms@lab.example", "Fcms@winlink.org"):
+            with self.subTest(to=to):
+                self.assertEqual(address_local_part(to), "FCMS")
+        self.assertIsNone(service_for("FCMS@lab.example"))
+
+
+class NativeCommandTests(unittest.TestCase):
+    """parse_commands: the body of a message to the service address; see
+    docs/INQUIRY-ADAPTER.md, "Service address"."""
+
+    SERVICES = frozenset({"HELP", "WIKI", "NEWS", "WX", "SOLAR"})
+
+    def parse(self, body, services=None):
+        return inquiry.parse_commands(body, services=self.SERVICES if services is None else services)
+
+    def reasons(self, body):
+        return [(r.line_number, r.reason) for r in self.parse(body).rejected]
+
+    def test_signature(self):
+        with self.assertRaises(TypeError):
+            inquiry.parse_commands("HELP")                      # services is required
+        with self.assertRaises(TypeError):
+            inquiry.parse_commands("HELP", self.SERVICES)       # and keyword-only
+        for body in (b"HELP", None, 5):
+            with self.subTest(body=body):
+                with self.assertRaises(TypeError):
+                    inquiry.parse_commands(body, services=self.SERVICES)
+
+    def test_services_are_checked_first(self):
+        for services in ({"LIST"}, {"UPDATE_CAT"}, {"wiki"}, {""}, {"A" * 33}, {"WIKI|X"}):
+            for body in ("HELP", "", "x" * 70000, "\ud800"):
+                with self.subTest(services=services, body=body[:10]):
+                    with self.assertRaises(ValueError) as caught:
+                        inquiry.parse_commands(body, services=frozenset(services))
+                    self.assertNotIsInstance(caught.exception, InquiryError)
+        for services in ("WIKI", ["WIKI"], None, frozenset({b"WIKI"}), frozenset({5})):
+            with self.subTest(services=services):
+                with self.assertRaises(TypeError):
+                    inquiry.parse_commands("WIKI", services=services)
+
+    def test_commands(self):
+        request = self.parse("HELP\nhelp wx\nwiki Mercury (planet)\nNEWS BBC |  3   FULL \n  WX\tFN43  ; home\n"
+                             "SOLAR\nWIKI|2\n")
+        self.assertEqual(request.rejected, ())
+        self.assertEqual(request.items, (
+            InquiryItem("service", "HELP"), InquiryItem("service", "HELP", "wx"),
+            InquiryItem("service", "WIKI", "Mercury (planet)"), InquiryItem("service", "NEWS", "BBC", "3 FULL"),
+            InquiryItem("service", "WX", "FN43"), InquiryItem("service", "SOLAR"), InquiryItem("service", "WIKI", "", "2"),
+        ))
+        self.assertIsInstance(request, inquiry.InquiryRequest)
+
+    def test_same_grammar_as_service_lines_in_inquiry(self):
+        body = "\n".join([
+            "WIKI Mercury", "wiki   mercury | 2", "WIKI " + "a" * 201, "WIKI a | b | c", "WIKI a |", "WIKI a |  ",
+            "WIKI x | " + "c" * 81, "WIKI M\u00e9rcury", "WIKI a\x1cb", "NEWS BBC|3", "WIKI " + "a" * 200,
+            "WIKI   a | b | c ; x", "WX " + "x" * 300 + "\x7f",
+        ])
+        expected = parse_inquiry("REQUEST", body, services=self.SERVICES)
+        self.assertEqual(self.parse(body), expected)
+        self.assertEqual(self.reasons(body), [(3, "arguments too long"), (4, "multiple choices"), (5, "empty choice"),
+                                              (6, "empty choice"), (7, "choice too long"), (8, "invalid characters"),
+                                              (9, "invalid characters"), (12, "multiple choices"),
+                                              (13, "invalid characters")])
+
+    def test_inquiry_items_are_pointed_out(self):
+        for line in ("LIST", "list", "UPDATE_CAT", "update_cat", "https://example.org/a;b", "HTTP://EXAMPLE.ORG",
+                     "http://example.org/x ; note", "https://example.org/" + "p" * 3000):
+            with self.subTest(line=line):
+                self.assertEqual(self.parse(line).items, ())
+                self.assertEqual(self.reasons(line), [(1, "inquiry item")])
+
+    def test_unknown_commands(self):
+        for line in ("ME_ZON_YORKC", "PROP_WWV | 2", "WIKIS x", "WIKI.X", "LIST WIKI", "list all", "CALL W1AW",
+                     "2", "1-3", "MORE", "Thanks!", "httpx://example.org", "ftp://example.org", "-----"):
+            with self.subTest(line=line):
+                self.assertEqual(self.parse(line).items, ())
+                self.assertEqual(self.reasons(line), [(1, "unknown command")])
+
+    def test_non_ascii_or_control_in_other_lines(self):
+        for line in ("w\u0131ki Mercury", "\uff37\uff29\uff2b\uff29 x", "WIKI\u200b x", "\u017folar",
+                     "WIKI\u00a0Mercury", "wiki\x0bx", "http\u017f://example.org", "LIST\x7f", "caf\u00e9",
+                     "https://example.org/caf\u00e9"):
+            with self.subTest(line=line):
+                self.assertEqual(self.parse(line).items, ())
+                self.assertEqual(self.reasons(line), [(1, "invalid characters")])
+
+    def test_rejected_text(self):
+        request = self.parse("ME_ZON_YORKC ; my zone\n" + "Q" * 100 + "\nab\x0bcd\n  LIST  \n")
+        self.assertEqual([(r.line_number, r.text) for r in request.rejected],
+                         [(1, "ME_ZON_YORKC"), (2, "Q" * 80), (3, "ab?cd"), (4, "LIST")])
+
+    def test_line_endings_comments_and_blank_lines(self):
+        request = self.parse("\r\n; a comment\r\nHELP\r\rWX FN43\n\n  \t \nSOLAR ; now\n")
+        self.assertEqual([i.value for i in request.items], ["HELP", "WX", "SOLAR"])
+        self.assertEqual(self.reasons("\n\nTHANKS\r\n"), [(3, "unknown command")])
+
+    def test_reading_stops_at_the_quoted_original(self):
+        body = ("WX FN43\r\n" + SEP + "\r\n\r\nMessage ID: 3NK9WQ2XJ7ST\r\nFrom: FCMS\r\nTo: N0CALL\r\n"
+                "Subject: FCMS - WX FN43\r\n\r\nWX FN43 NWS GYX\r\n1. Full forecast\r\n   WX FN43 | FULL\r\n")
+        request = self.parse(body)
+        self.assertEqual(request.items, (InquiryItem("service", "WX", "FN43"),))
+        self.assertEqual(request.rejected, ())
+
+    def test_separator_forms(self):
+        for sep in (SEP, "----- Message from SERVICE sent 2026/11/25 00:00 -----",
+                    "----- Message from N0CALL@lab.example sent 1999/01/01 23:59 -----",
+                    "----- Message from \u00e9 sent 2026/11/25 00:00 -----"):
+            with self.subTest(sep=sep):
+                self.assertEqual(self.parse("HELP\n" + sep + "\nWIKI x\nnot a command\n").items,
+                                 (InquiryItem("service", "HELP"),))
+        for sep in (SEP + " ", " " + SEP, SEP + "-", SEP.replace("from FCMS", "from"),
+                    "----- Message from FCMS sent \u0662\u0660\u0662\u0666/11/25 00:00 -----",
+                    "----- Message FROM FCMS sent 2026/11/25 00:00 -----", "x " + SEP):
+            with self.subTest(sep=sep):
+                request = self.parse("HELP\n" + sep + "\nWIKI x\n")
+                self.assertEqual(request.items, (InquiryItem("service", "HELP"), InquiryItem("service", "WIKI", "x")))
+                self.assertEqual([r.line_number for r in request.rejected], [2])
+
+    def test_only_the_first_separator_counts(self):
+        request = self.parse("HELP\n" + SEP + "\nWIKI x\n" + SEP + "\nWX y\n")
+        self.assertEqual(request, inquiry.InquiryRequest((InquiryItem("service", "HELP"),), ()))
+
+    def test_line_ending_before_the_separator_counts(self):
+        def content(size):
+            text = "HELP\n;" + "x" * (size - 6)
+            self.assertEqual(len(text.encode("utf-8")), size)
+            return text
+        for body in (content(8191) + "\n" + SEP, content(8190) + "\r\n" + SEP, content(8192)):
+            with self.subTest(size=len(body)):
+                self.assertEqual(self.parse(body).items, (InquiryItem("service", "HELP"),))
+        for body in (content(8192) + "\n" + SEP, content(8192) + "\r\n" + SEP, content(8191) + "\r\n" + SEP,
+                     content(8192) + "\r" + SEP):
+            with self.subTest(size=len(body)):
+                with self.assertRaises(InquiryError) as caught:
+                    self.parse(body)
+                self.assertEqual(str(caught.exception), "body too large")
+
+    def test_byte_order_mark_counts_toward_the_size(self):
+        # As in parse_inquiry: sizes include a leading U+FEFF (3 bytes), which is then removed.
+        exact = "\ufeffHELP\n;" + "x" * (8192 - 3 - 6)
+        self.assertEqual(len(exact.encode("utf-8")), 8192)
+        self.assertEqual(self.parse(exact).items, (InquiryItem("service", "HELP"),))
+        self.assertEqual(self.parse(exact[:-1] + "\n" + SEP).items, (InquiryItem("service", "HELP"),))
+        for body in (exact + "x", exact + "\n" + SEP):
+            with self.subTest(size=len(body)):
+                with self.assertRaises(InquiryError) as caught:
+                    self.parse(body)
+                self.assertEqual(str(caught.exception), "body too large")
+
+    def test_rejected_lines_do_not_count_toward_the_limit(self):
+        body = "\n".join([f"UNKNOWN{n}" for n in range(10)] + [f"WIKI t{n}" for n in range(32)])
+        request = self.parse(body)
+        self.assertEqual(len(request.items), 32)
+        self.assertEqual([r.reason for r in request.rejected], ["unknown command"] * 10)
+
+    def test_empty_bodies_give_an_empty_request(self):
+        for body in ("", "\r\n\r\n", "  \t \n", "; nothing\n", "\ufeff", "\ufeff\n", SEP, SEP + "\nWIKI x\n",
+                     "\n" + SEP + "\nLIST\n"):
+            with self.subTest(body=body):
+                self.assertEqual(self.parse(body), inquiry.InquiryRequest((), ()))
+
+    def test_byte_order_mark(self):
+        self.assertEqual(self.parse("\ufeffHELP").items, (InquiryItem("service", "HELP"),))
+
+    def test_size_limits(self):
+        pre = "HELP\n;"
+        pre += "x" * (8192 - len(pre) - 1) + "\n"
+        self.assertEqual(len(pre.encode("utf-8")), 8192)
+        self.assertEqual(self.parse(pre).items, (InquiryItem("service", "HELP"),))
+        tail = SEP + "\n" + ("y" * 60 + "\n") * 800
+        self.assertEqual(self.parse(pre + tail).items, (InquiryItem("service", "HELP"),))
+        for body in (pre + "x", pre + "x\n" + tail, "\u00e9" * 4097, "HELP\n" + "y" * 70000):
+            with self.subTest(size=len(body)):
+                with self.assertRaises(InquiryError) as caught:
+                    self.parse(body)
+                self.assertEqual(str(caught.exception), "body too large")
+        whole = "HELP\n" + SEP + "\n"
+        whole += "y" * (65536 - len(whole))
+        self.assertEqual(len(whole.encode("utf-8")), 65536)
+        self.assertEqual(self.parse(whole).items, (InquiryItem("service", "HELP"),))
+        for body in (whole + "y", whole[:-1] + "\u00e9"):
+            with self.subTest(size=len(body.encode("utf-8"))):
+                with self.assertRaises(InquiryError) as caught:
+                    self.parse(body)
+                self.assertEqual(str(caught.exception), "body too large")
+
+    def test_lone_surrogates(self):
+        for body in ("\ud800", "HELP\n\udfff", "HELP\n" + SEP + "\n\ud800"):
+            with self.subTest(body=body):
+                with self.assertRaises(InquiryError) as caught:
+                    self.parse(body)
+                self.assertEqual(str(caught.exception), "invalid body")
+
+    def test_duplicates_and_the_item_limit(self):
+        self.assertEqual(len(self.parse("WX FN43\nwx  FN43\nWX fn43\nWX FN43 | FULL\n").items), 3)
+        body = "\n".join(f"WIKI t{n}" for n in range(40)) + "\nWIKI t0\nLIST\nTHANKS\n"
+        request = self.parse(body)
+        self.assertEqual(len(request.items), 32)
+        self.assertEqual([(r.line_number, r.reason) for r in request.rejected],
+                         [(n, "too many items") for n in range(33, 41)] + [(42, "inquiry item"), (43, "unknown command")])
+
+    def test_empty_services_reject_every_line(self):
+        request = inquiry.parse_commands("HELP\nWX FN43\nLIST\n", services=frozenset())
+        self.assertEqual(request.items, ())
+        self.assertEqual([r.reason for r in request.rejected], ["unknown command", "unknown command", "inquiry item"])
+
 
 
 if __name__ == "__main__":

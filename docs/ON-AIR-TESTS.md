@@ -68,11 +68,67 @@ both transmitters.
 **Result goes to:** the Express rows of
 [WINLINK-INTEROPERABILITY.md](WINLINK-INTEROPERABILITY.md).
 
+### Express addresses the node's service address, lab server only
+
+**Why:** native requests go to the node's own service address, `FCMS` by
+default, which has no Winlink account
+([INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#two-layers)). This
+checks whether Express lets a user address it, bare and with a domain,
+what it puts on the wire, and whether Reply to a message From `FCMS`
+goes back to `FCMS`.
+
+**Needs:** the lab host and the Express laptop on the path already shown
+to work without a radio: Packet Winlink, virtual TCP KISS, the kissterm
+AX.25 bridge and the B2F lab server
+([WINLINK-INTEROPERABILITY.md](WINLINK-INTEROPERABILITY.md), first Express
+row); the lab database and lab password file; synthetic messages only.
+**Never against Winlink's production servers**: every session in this
+test connects to the lab server.
+
+**Before starting: credentials.** As for the RF test above: read the
+*Winlink Express account warning* in [TCP-KISS-B2F-LAB.md](TCP-KISS-B2F-LAB.md),
+use an independently configured test client with disposable credentials,
+and confirm it is isolated from real account updates. If that cannot be
+confirmed, do not run this test.
+
+1. On the lab host, update the checkout to `main` and set `PYTHONPATH` as
+   in steps 1 and 3 of the RF test above. Start the B2F server.
+2. Queue one synthetic download with the download seeding snippet under
+   *Operator-controlled use* in TCP-KISS-B2F-LAB.md, changed to
+   `sender='FCMS'`, `subject='FCMS - lab test [K7QX]'` and no attachment.
+   Note the message ID it prints.
+3. In Express, compose a new message `To: FCMS`, subject `lab 1`, body
+   `HELP`. Compose a second `To: FCMS@LAB_DOMAIN` (the lab server's
+   domain), subject `lab 2`, body `HELP`. Note any warning or change
+   Express makes to either address while composing or saving.
+4. Start the bridge against the virtual TCP KISS port and connect from
+   Express to the lab station. Both messages go up; the download from
+   step 2 comes down in the same session.
+5. Open the downloaded message and note how Express shows its sender.
+   Press Reply, type `2` above the quoted text, and send it in a second
+   lab session.
+6. On the lab host, with `service.list_incoming(session)` as described
+   after the seeding snippet, print only the `To:` and `Subject:` lines of
+   the three uploads and the separator line of the Reply.
+
+**Report:**
+- Did Express accept `FCMS` and `FCMS@LAB_DOMAIN` without complaint? Any
+  warning, and did it rewrite either address?
+- The `To:` header of each upload as stored by the server (for example
+  `FCMS`, `FCMS@winlink.org` or `SMTP:FCMS@LAB_DOMAIN`).
+- How Express showed the sender of the `From: FCMS` message.
+- For the Reply: its `To:`, its subject, and the separator line above the
+  quoted text, as stored. Does `parse_menu_reply` on the stored message
+  return code `K7QX` and choice 2?
+- The Express version.
+
+**Result goes to:** [INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#reading-a-reply)
+(the UNVERIFIED note there) and [INQUIRY-ADAPTER.md](INQUIRY-ADAPTER.md#check_service_address).
+
 ## Later (not ready yet)
 
 - **Express reads a catalog from this server.** Needs the INQUIRY robot on the lab
   server. Send `LIST` to `INQUIRY` over the lab, then check whether
   Express rewrites `Data\Winlink Queries.txt` from our reply.
-- **A menu round trip.** Needs the robot and `WIKI`. Request
-  `WIKI Mercury`, reply with a number, and check the article that comes
-  back.
+- **A menu round trip.** Needs the robot and `WIKI`. Send `WIKI Mercury`
+  to `FCMS`, reply with a number, and check the article that comes back.

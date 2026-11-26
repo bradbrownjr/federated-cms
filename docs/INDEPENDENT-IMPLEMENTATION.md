@@ -60,6 +60,9 @@ Winlink Express can use to collect BBS mail
   ordinary use by a licensed operator of their own account.
 - Present our server as Winlink. It identifies itself as `FCMS`, uses its own
   addresses and domains, and does not use `winlink.org` addresses as its own.
+  Its replies come from its own service address (`FCMS` by default), never
+  from `SERVICE`, Winlink's system address, and it does not answer mail to
+  `SERVICE` ([INTERACTIVE-SERVICES.md](INTERACTIVE-SERVICES.md#two-layers)).
 - Use anyone else's credentials, accounts or captured traffic.
 - Use another program's SID name, or anything else, to get past the
   production CMS's check on client programs. A program reaches Winlink's
