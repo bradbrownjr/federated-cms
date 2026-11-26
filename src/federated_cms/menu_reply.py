@@ -7,7 +7,7 @@ from email.header import decode_header, make_header
 from email.utils import getaddresses
 import re
 
-from .inquiry import address_local_part
+from .inquiry import DEFAULT_SERVICE_ADDRESS, address_local_part, check_service_address
 
 
 @dataclass(frozen=True)
@@ -20,8 +20,9 @@ class MenuReply:
 class MenuReplyError(ValueError):
     """A menu reply failed a contract check."""
 
-    def __init__(self, reason: str):
+    def __init__(self, reason: str, code: str | None = None):
         self.reason = reason
+        self.code = code
         super().__init__(reason)
 
 
@@ -46,7 +47,7 @@ def _check_tree(message):
             stack.extend((child, depth + int(container)) for child in payload)
 
 
-def _has_recipient(message):
+def _has_recipient(message, service_address):
     """Check each raw To field without decoding encoded words."""
     for value in message.get_all("To", []):
         try:
@@ -55,7 +56,7 @@ def _has_recipient(message):
             continue
         for _, address in addresses:
             try:
-                if address_local_part(address) == "SERVICE":
+                if address_local_part(address) == service_address:
                     return True
             except ValueError:
                 continue
@@ -139,16 +140,18 @@ def _choices(data):
     return tuple(n for start, end in merged for n in range(start, end + 1)), False
 
 
-def parse_menu_reply(message: bytes) -> MenuReply:
+def parse_menu_reply(message: bytes, *, address: str = DEFAULT_SERVICE_ADDRESS) -> MenuReply:
     """Parse a message, mapping unexpected mail parser failures to our error."""
     if not isinstance(message, bytes):
         raise TypeError("message must be bytes")
+    check_service_address(address)
     if len(message) > 65536:
         raise MenuReplyError("too large")
+    code = None
     try:
         parsed = email.message_from_bytes(message, policy=policy.compat32)
         _check_tree(parsed)
-        if not _has_recipient(parsed):
+        if not _has_recipient(parsed, address):
             raise MenuReplyError("no service address")
         code = _subject_code(parsed)
         part = _text_part(parsed)
@@ -158,7 +161,9 @@ def parse_menu_reply(message: bytes) -> MenuReply:
         payload = part.get_payload(decode=True)
         numbers, more = _choices(payload if payload is not None else b"")
         return MenuReply(code, numbers, more)
-    except MenuReplyError:
+    except MenuReplyError as exc:
+        if exc.reason != "malformed message":
+            exc.code = code
         raise
     except Exception as exc:
         raise MenuReplyError("malformed message") from exc

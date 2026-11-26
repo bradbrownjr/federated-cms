@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import re
 
+DEFAULT_SERVICE_ADDRESS = "FCMS"
+RESERVED_ADDRESSES = frozenset({"INQUIRY", "QTH", "SERVICE", "SYSTEM", "OPTIONS", "POSTMASTER", "MAILER-DAEMON"})
+
 
 @dataclass(frozen=True)
 class InquiryItem:
@@ -53,6 +56,7 @@ _LON = re.compile(r"([0-9]{3})-([0-9]{2}\.[0-9]{1,4})([EW]?)\Z")
 _SPEED = re.compile(r"[0-9]+(?:\.[0-9]+)?\Z")
 _COURSE = re.compile(r"([0-9]{1,3})([TM])\Z")
 _LINES = re.compile(r"\r\n|\r|\n")
+_SEPARATOR = re.compile(r"----- Message from .+ sent [0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2} -----")
 _ASCII_UPPER = str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 _POSITION_KEYS = {"DATE", "LATITUDE", "LONGITUDE", "SPEED", "COURSE", "COMMENT"}
 
@@ -109,6 +113,14 @@ def service_for(address: str) -> str | None:
     return local if local in ("INQUIRY", "QTH") else None
 
 
+def check_service_address(address: str) -> str:
+    if not isinstance(address, str):
+        raise TypeError("address must be a string")
+    if not 3 <= len(address) <= 12 or not re.fullmatch(r"[A-Z]+(?:-[A-Z0-9]+)?", address) or address in RESERVED_ADDRESSES:
+        raise ValueError("invalid service address")
+    return address
+
+
 def _validate_services(services: set[str] | frozenset[str]) -> None:
     """Reject invalid service configuration before examining the request."""
     if not isinstance(services, (set, frozenset)):
@@ -143,6 +155,10 @@ def parse_inquiry(subject: str, body: str, *, services: frozenset[str] = frozens
     body = _check_body(body, InquiryError)
     if not subject.isascii() or _upper(subject.strip()) not in ("REQUEST", "//WL2K REQUEST"):
         raise InquiryError("invalid subject")
+    return _parse_lines(body, services, native=False)
+
+
+def _parse_lines(body: str, services: frozenset[str], *, native: bool) -> InquiryRequest:
     items = []
     rejected = []
     seen = set()
@@ -158,6 +174,11 @@ def parse_inquiry(subject: str, body: str, *, services: frozenset[str] = frozens
             item, reason = _service_item(value, verb)
         elif not value.isascii() or any(_control(char) for char in value):
             item = None
+            if native:
+                reason = "invalid characters"
+        elif native:
+            item = None
+            reason = "inquiry item" if upper in ("LIST", "UPDATE_CAT") or upper.startswith(("HTTP://", "HTTPS://")) else "unknown command"
         elif upper == "LIST":
             item = InquiryItem("list", upper)
         elif upper == "UPDATE_CAT":
@@ -177,9 +198,37 @@ def parse_inquiry(subject: str, body: str, *, services: frozenset[str] = frozens
             else:
                 items.append(item)
                 seen.add(item)
-    if not items and not rejected:
+    if not native and not items and not rejected:
         raise InquiryError("empty request")
     return InquiryRequest(tuple(items), tuple(rejected))
+
+
+def parse_commands(body: str, *, services: frozenset[str]) -> InquiryRequest:
+    _validate_services(services)
+    if not isinstance(body, str):
+        raise TypeError("body must be a string")
+    if len(body) > 65536:
+        raise InquiryError("body too large")
+    try:
+        size = len(body.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise InquiryError("invalid body") from exc
+    if size > 65536:
+        raise InquiryError("body too large")
+    start = 0
+    for match in _LINES.finditer(body):
+        line = body[start:match.start()]
+        if _SEPARATOR.fullmatch(line.removeprefix("\ufeff") if start == 0 else line):
+            body = body[:start]
+            break
+        start = match.end()
+    else:
+        line = body[start:]
+        if _SEPARATOR.fullmatch(line.removeprefix("\ufeff") if start == 0 else line):
+            body = body[:start]
+    if len(body.encode("utf-8")) > 8192:
+        raise InquiryError("body too large")
+    return _parse_lines(body.removeprefix("\ufeff"), services, native=True)
 
 
 def _coordinate(value: str, pattern: re.Pattern, limit: int) -> float:
