@@ -13,6 +13,8 @@ mkdir -p "$home"
 chmod 700 "$home"
 [ -d "$home/federated-cms/.git" ] || git clone --quiet "$repo_url" "$home/federated-cms"
 [ -d "$home/kissterm/.git" ] || git clone --quiet "$kiss_url" "$home/kissterm"
+git -C "$home/federated-cms" fetch --quiet origin main
+git -C "$home/kissterm" fetch --quiet origin
 git -C "$home/federated-cms" checkout --quiet --detach origin/main
 git -C "$home/kissterm" checkout --quiet --detach \
     "$(tr -d '[:space:]' < "$home/federated-cms/deploy/lab/kissterm.pin")"

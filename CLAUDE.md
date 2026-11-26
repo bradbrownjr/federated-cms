@@ -15,3 +15,11 @@ Facts that are established; do not contradict them in code, docs or answers:
   the repository, never present the server as Winlink.
 
 Read the relevant doc before making claims about Winlink behaviour, and cite it.
+
+## Lab host
+
+The lab runs from `deploy/lab` as systemd user services on the lab host
+(see `deploy/lab/README.md`). After merging a pull request to `main`, run
+`~/.local/share/fcms-lab/federated-cms/deploy/lab/update.sh --wait` there, so
+the lab moves to the new commit once its CI passes. Change the install only
+through `deploy/lab`, never by editing the installed copy.
